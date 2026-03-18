@@ -38,6 +38,177 @@
       letter-spacing: 0.4px;
     }
 
+    .gateway-card {
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 12% 15%, rgba(15, 118, 110, 0.10), transparent 34%),
+        radial-gradient(circle at 85% 85%, rgba(200, 75, 49, 0.08), transparent 32%),
+        var(--card);
+      border: 1px solid #cfd9d8;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 10px 24px rgba(22, 28, 31, 0.10);
+      margin-bottom: 14px;
+    }
+    .gateway-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(90deg, rgba(15, 118, 110, 0.05) 1px, transparent 1px),
+        linear-gradient(rgba(15, 118, 110, 0.05) 1px, transparent 1px);
+      background-size: 24px 24px;
+      opacity: 0.25;
+      pointer-events: none;
+    }
+    .gateway-card > * {
+      position: relative;
+      z-index: 1;
+    }
+    .gateway-summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .gateway-endpoint {
+      font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      color: #0f3b37;
+      background: rgba(255, 255, 255, 0.75);
+      border: 1px solid #bcd1cf;
+      border-radius: 7px;
+      padding: 3px 8px;
+    }
+    .gateway-pill, .link-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .gateway-pill.idle, .link-pill.idle {
+      border-color: #94a3b8;
+      background: #f8fafc;
+      color: #475569;
+    }
+    .gateway-pill.active, .link-pill.active {
+      border-color: #d97706;
+      background: #fffbeb;
+      color: #92400e;
+    }
+    .gateway-pill.ok, .link-pill.ok {
+      border-color: #047857;
+      background: #ecfdf5;
+      color: #065f46;
+    }
+    .gateway-pill.warn, .link-pill.warn {
+      border-color: #b45309;
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .gateway-pill.error, .link-pill.error {
+      border-color: #dc2626;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .gateway-links {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .gateway-link {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 10px 10px;
+      background: rgba(252, 252, 251, 0.88);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 8px;
+      align-items: center;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+    }
+    .gateway-link::before {
+      content: "";
+      position: absolute;
+      top: -10px;
+      left: 18px;
+      width: 2px;
+      height: 10px;
+      background: #cbd5e1;
+      border-radius: 2px;
+    }
+    .gateway-link::after {
+      content: "";
+      position: absolute;
+      top: -14px;
+      left: 14px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #cbd5e1;
+      box-shadow: 0 0 0 3px rgba(203, 213, 225, 0.3);
+    }
+    .service-name {
+      font-weight: 700;
+      font-size: 0.9rem;
+    }
+    .link-meta {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.3;
+      min-height: 1.2em;
+    }
+    .gateway-link.idle {
+      border-color: #cbd5e1;
+    }
+    .gateway-link.active {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14);
+      transform: translateY(-1px);
+    }
+    .gateway-link.active::before,
+    .gateway-link.active::after {
+      background: #f59e0b;
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
+    }
+    .gateway-link.ok {
+      border-color: #34d399;
+    }
+    .gateway-link.ok::before,
+    .gateway-link.ok::after {
+      background: #34d399;
+      box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18);
+    }
+    .gateway-link.warn {
+      border-color: #f59e0b;
+    }
+    .gateway-link.warn::before,
+    .gateway-link.warn::after {
+      background: #f59e0b;
+      box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
+    }
+    .gateway-link.error {
+      border-color: #f87171;
+      background: rgba(254, 242, 242, 0.9);
+    }
+    .gateway-link.error::before,
+    .gateway-link.error::after {
+      background: #ef4444;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.20);
+    }
+
     .flow {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -48,16 +219,54 @@
       border: 1px solid var(--line);
       background: #fff;
       border-radius: 10px;
-      padding: 8px 10px;
+      border-left-width: 5px;
+      padding: 9px 11px;
       font-size: 0.9rem;
       color: var(--muted);
-      text-align: center;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-height: 64px;
+      transition: box-shadow 0.18s ease, transform 0.18s ease;
+    }
+    .flow-title {
+      font-weight: 700;
+      color: inherit;
+    }
+    .flow-meta {
+      font-size: 0.8rem;
+      line-height: 1.25;
+      color: inherit;
     }
     .flow-step.active {
-      border-color: var(--accent);
-      color: var(--accent);
-      font-weight: 700;
-      background: #f0f9f7;
+      box-shadow: 0 8px 20px rgba(15, 118, 110, 0.14);
+      transform: translateY(-1px);
+    }
+    .flow-step.idle {
+      border-left-color: #94a3b8;
+      background: #f8fafc;
+      color: #475569;
+    }
+    .flow-step.blocked {
+      border-left-color: #b0b8c4;
+      background: #f4f5f6;
+      color: #6b7280;
+    }
+    .flow-step.running {
+      border-left-color: var(--warn);
+      background: #fffbeb;
+      color: #92400e;
+    }
+    .flow-step.done {
+      border-left-color: var(--ok);
+      background: #ecfdf5;
+      color: #065f46;
+    }
+    .flow-step.error {
+      border-left-color: var(--err);
+      background: #fef2f2;
+      color: #991b1b;
     }
 
     .grid {
@@ -159,6 +368,7 @@
     }
 
     @media (max-width: 1050px) {
+      .gateway-links { grid-template-columns: 1fr; }
       .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .step-card { grid-column: span 12; }
     }
@@ -171,11 +381,57 @@
   <div class="wrap">
     <h1>WeatherScope</h1>
 
+    <section class="gateway-card">
+      <div class="title-row">
+        <h3>Gateway</h3>
+        <span id="gatewayMode" class="step-badge">Entry Point</span>
+      </div>
+      <div class="gateway-summary">
+        <span id="gatewayState" class="gateway-pill idle">idle</span>
+        <span id="gatewayDetail">No traffic yet.</span>
+        <span id="gatewayEndpoint" class="gateway-endpoint"></span>
+      </div>
+      <div class="gateway-links">
+        <div class="gateway-link">
+          <span class="service-name">Global Weather Forecast</span>
+          <span id="link-fourcastnet" class="link-pill idle">idle</span>
+          <span id="meta-fourcastnet" class="link-meta">No traffic yet</span>
+        </div>
+        <div class="gateway-link">
+          <span class="service-name">Regional Weather Inference</span>
+          <span id="link-inference" class="link-pill idle">idle</span>
+          <span id="meta-inference" class="link-meta">No traffic yet</span>
+        </div>
+        <div class="gateway-link">
+          <span class="service-name">Map</span>
+          <span id="link-map" class="link-pill idle">idle</span>
+          <span id="meta-map" class="link-meta">No traffic yet</span>
+        </div>
+        <div class="gateway-link">
+          <span class="service-name">LLM Weather Advisory</span>
+          <span id="link-llm" class="link-pill idle">idle</span>
+          <span id="meta-llm" class="link-meta">No traffic yet</span>
+        </div>
+      </div>
+    </section>
+
     <div class="flow">
-      <div id="flow1" class="flow-step active">1. Global Forecast</div>
-      <div id="flow2" class="flow-step">2. Regional Extraction</div>
-      <div id="flow3" class="flow-step">3. Downscale</div>
-      <div id="flow4" class="flow-step">4. LLM Advisory</div>
+      <div id="flow1" class="flow-step idle active">
+        <div class="flow-title">Global Forecast</div>
+        <div id="flow1Meta" class="flow-meta">Idle</div>
+      </div>
+      <div id="flow2" class="flow-step blocked">
+        <div class="flow-title">Regional Forecast</div>
+        <div id="flow2Meta" class="flow-meta">Waiting for Global Forecast</div>
+      </div>
+      <div id="flow3" class="flow-step blocked">
+        <div class="flow-title">Regional Downscale</div>
+        <div id="flow3Meta" class="flow-meta">Waiting for Regional Forecast</div>
+      </div>
+      <div id="flow4" class="flow-step blocked">
+        <div class="flow-title">Advisory</div>
+        <div id="flow4Meta" class="flow-meta">Waiting for Regional Downscale</div>
+      </div>
     </div>
 
     <div class="grid">
@@ -198,7 +454,7 @@
 
       <section class="card step-card">
         <div class="title-row">
-          <h3>Regional Extraction</h3>
+          <h3>Regional Forecast</h3>
           <span class="step-badge">Step 2</span>
         </div>
         <div class="controls">
@@ -220,7 +476,7 @@
 
       <section class="card step-card">
         <div class="title-row">
-          <h3>Downscale</h3>
+          <h3>Regional Downscale</h3>
           <span class="step-badge">Step 3</span>
         </div>
         <div class="controls">
@@ -247,7 +503,7 @@
 
       <section class="card step-card">
         <div class="title-row">
-          <h3>LLM Advisory</h3>
+          <h3>Advisory</h3>
           <span class="step-badge">Step 4</span>
         </div>
         <div class="controls">
@@ -265,10 +521,38 @@
     const state = {
       jobId: null,
       forecastStatus: null,
+      forecastProgress: null,
       regions: {},
       extracted: null,
+      extractContext: null,
       downscaled: null,
+      downscaleContext: null,
+      advisory: null,
+      errors: {
+        forecast: null,
+        extract: null,
+        downscale: null,
+        llm: null,
+      },
+      busy: {
+        forecast: false,
+        extract: false,
+        downscale: false,
+        llm: false,
+      },
+      gateway: {
+        status: "idle",
+        detail: "No traffic yet.",
+        endpoint: window.location.origin,
+      },
+      serviceLinks: {
+        fourcastnet: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null },
+        inference: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null },
+        map: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null },
+        llm: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null },
+      },
       forecastPollTimer: null,
+      gatewayPollTimer: null,
       mapUrls: {
         global: null,
         regional: null,
@@ -276,12 +560,182 @@
       },
     };
 
+    const SERVICE_LABELS = {
+      fourcastnet: "Global Weather Forecast",
+      inference: "Regional Weather Inference",
+      map: "Map",
+      llm: "LLM Weather Advisory",
+    };
+
     const el = (id) => document.getElementById(id);
 
+    function normalizePath(path) {
+      if (typeof path !== "string") return "";
+      return path.split("?")[0];
+    }
+
+    function resolveServiceKey(path) {
+      const clean = normalizePath(path);
+      if (clean === "/api/downscale") return "inference";
+      if (clean.startsWith("/api/map")) return "map";
+      if (clean === "/api/interpret") return "llm";
+      if (clean.startsWith("/api/")) return "fourcastnet";
+      return null;
+    }
+
+    function setPill(node, status, label) {
+      node.classList.remove("idle", "active", "ok", "warn", "error");
+      node.classList.add(status);
+      node.textContent = label;
+    }
+
+    function updateGatewayPanel() {
+      const activeLinks = [];
+      const errorLinks = [];
+      let hasOk = false;
+
+      Object.keys(state.serviceLinks).forEach((serviceKey) => {
+        const link = state.serviceLinks[serviceKey];
+        const pill = el(`link-${serviceKey}`);
+        const meta = el(`meta-${serviceKey}`);
+        const card = pill.closest(".gateway-link");
+        const label = link.status === "active" ? "active" : link.status;
+        setPill(pill, link.status, label);
+        if (card) {
+          card.classList.remove("idle", "active", "ok", "warn", "error");
+          card.classList.add(link.status);
+        }
+        meta.textContent = link.detail;
+
+        if (link.status === "active") activeLinks.push(SERVICE_LABELS[serviceKey]);
+        if (link.status === "error") errorLinks.push(SERVICE_LABELS[serviceKey]);
+        if (link.status === "ok") hasOk = true;
+      });
+
+      el("gatewayMode").textContent = window.location.port === "8010" ? "Local Mode" : "Gateway Mode";
+      el("gatewayEndpoint").textContent = state.gateway.endpoint;
+
+      const gatewayState = el("gatewayState");
+      const gatewayDetail = el("gatewayDetail");
+
+      if (state.gateway.status === "error") {
+        setPill(gatewayState, "error", "down");
+        gatewayDetail.textContent = state.gateway.detail;
+        return;
+      }
+
+      if (activeLinks.length) {
+        setPill(gatewayState, "active", "active");
+        gatewayDetail.textContent = `Routing requests to ${activeLinks.join(", ")} via ${state.gateway.endpoint}`;
+        return;
+      }
+
+      if (errorLinks.length) {
+        setPill(gatewayState, "warn", "degraded");
+        gatewayDetail.textContent = `Connection errors detected for ${errorLinks.join(", ")}.`;
+        return;
+      }
+
+      if (hasOk || state.gateway.status === "ok") {
+        setPill(gatewayState, "ok", "healthy");
+        gatewayDetail.textContent = state.gateway.detail;
+        return;
+      }
+
+      setPill(gatewayState, "idle", "idle");
+      gatewayDetail.textContent = state.gateway.detail;
+    }
+
+    function markServiceRequestStart(serviceKey, method, path) {
+      if (!serviceKey || !state.serviceLinks[serviceKey]) return;
+      const link = state.serviceLinks[serviceKey];
+      link.inFlight += 1;
+      link.status = "active";
+      link.lastMethod = method;
+      link.lastPath = normalizePath(path);
+      link.detail = `${method} ${link.lastPath}`;
+      updateGatewayPanel();
+    }
+
+    function markServiceRequestEnd(serviceKey, ok, statusCode, durationMs, errorMessage) {
+      if (!serviceKey || !state.serviceLinks[serviceKey]) return;
+      const link = state.serviceLinks[serviceKey];
+      link.inFlight = Math.max(0, link.inFlight - 1);
+
+      if (link.inFlight > 0) {
+        link.status = "active";
+        link.detail = `${link.inFlight} request(s) in flight`;
+      } else if (ok) {
+        link.status = "ok";
+        const code = typeof statusCode === "number" ? statusCode : 200;
+        const ms = Number.isFinite(durationMs) ? Math.round(durationMs) : 0;
+        link.detail = `${link.lastMethod || "REQ"} ${link.lastPath || ""} -> ${code} (${ms} ms)`;
+      } else {
+        link.status = "error";
+        link.detail = errorMessage || "Request failed";
+      }
+
+      updateGatewayPanel();
+    }
+
+    async function refreshGatewayHealth() {
+      const started = performance.now();
+      try {
+        const res = await fetch("/health", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const elapsed = Math.round(performance.now() - started);
+        state.gateway.status = "ok";
+        state.gateway.detail = `Gateway healthy (${elapsed} ms) at ${state.gateway.endpoint}`;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        state.gateway.status = "error";
+        state.gateway.detail = `Gateway unreachable: ${message}`;
+      } finally {
+        updateGatewayPanel();
+      }
+    }
+
+    function startGatewayPolling() {
+      if (state.gatewayPollTimer) {
+        clearInterval(state.gatewayPollTimer);
+      }
+      refreshGatewayHealth();
+      state.gatewayPollTimer = setInterval(refreshGatewayHealth, 15000);
+    }
+
+    function stopGatewayPolling() {
+      if (state.gatewayPollTimer) {
+        clearInterval(state.gatewayPollTimer);
+        state.gatewayPollTimer = null;
+      }
+    }
+
     async function api(path, opts = {}) {
-      const res = await fetch(path, opts);
-      if (!res.ok) throw new Error(await res.text());
-      return res;
+      const method = (opts.method || "GET").toUpperCase();
+      const serviceKey = resolveServiceKey(path);
+      const started = performance.now();
+      if (serviceKey) {
+        markServiceRequestStart(serviceKey, method, path);
+      }
+      try {
+        const res = await fetch(path, opts);
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(body || `HTTP ${res.status}`);
+        }
+        if (serviceKey) {
+          markServiceRequestEnd(serviceKey, true, res.status, performance.now() - started);
+        }
+        return res;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (serviceKey) {
+          markServiceRequestEnd(serviceKey, false, null, performance.now() - started, message);
+        }
+        throw err;
+      }
     }
 
     function setStatus(id, message, level = "") {
@@ -290,10 +744,111 @@
       node.className = `status${level ? ` ${level}` : ""}`;
     }
 
-    function setFlow(step) {
-      for (let i = 1; i <= 4; i++) {
-        el(`flow${i}`).classList.toggle("active", i <= step);
+    function setFlowStep(stepNum, stepState, meta, active) {
+      const node = el(`flow${stepNum}`);
+      node.classList.remove("idle", "blocked", "running", "done", "error", "active");
+      node.classList.add(stepState);
+      if (active) node.classList.add("active");
+      el(`flow${stepNum}Meta`).textContent = meta;
+    }
+
+    function updateFlowSummary() {
+      const forecastDone = state.forecastStatus === "completed";
+      const forecastFailed = state.forecastStatus === "failed" || !!state.errors.forecast;
+      const forecastRunning = !!state.busy.forecast || (!!state.jobId && !forecastDone && !forecastFailed);
+
+      const extractedReady = !!state.extracted;
+      const downscaledReady = !!state.downscaled;
+      const advisoryReady = !!state.advisory;
+
+      let s1 = "idle";
+      let m1 = "Idle";
+      if (forecastFailed) {
+        s1 = "error";
+        m1 = "Forecast failed";
+      } else if (forecastDone) {
+        s1 = "done";
+        m1 = state.jobId ? `Job ${state.jobId} completed` : "Completed";
+      } else if (forecastRunning) {
+        s1 = "running";
+        const progress = state.forecastProgress ? ` | ${state.forecastProgress}` : "";
+        m1 = state.jobId ? `Job ${state.jobId} ${state.forecastStatus || "starting"}${progress}` : "Starting forecast...";
       }
+
+      let s2 = "blocked";
+      let m2 = "Waiting for Global Forecast";
+      if (forecastDone) {
+        if (state.errors.extract) {
+          s2 = "error";
+          m2 = "Extraction failed";
+        } else if (state.busy.extract) {
+          s2 = "running";
+          const region = state.extractContext?.region || "region";
+          const step = state.extractContext?.step ?? 0;
+          m2 = `Extracting ${region}, step ${step}`;
+        } else if (extractedReady) {
+          s2 = "done";
+          const region = state.extractContext?.region || state.extracted?.region || "region";
+          const step = state.extractContext?.step ?? 0;
+          const varCount = Object.keys(state.extracted?.variables || {}).length;
+          m2 = `${region}, step ${step} | ${varCount} vars`;
+        } else {
+          s2 = "idle";
+          m2 = "Ready to extract";
+        }
+      }
+
+      let s3 = "blocked";
+      let m3 = "Waiting for Regional Forecast";
+      if (extractedReady) {
+        if (state.errors.downscale) {
+          s3 = "error";
+          m3 = "Downscale failed";
+        } else if (state.busy.downscale) {
+          s3 = "running";
+          const method = state.downscaleContext?.method || el("methodSel").value;
+          const upscale = state.downscaleContext?.upscale || Number(el("upscale").value || 4);
+          m3 = `Running ${method} x${upscale}`;
+        } else if (downscaledReady) {
+          s3 = "done";
+          const method = state.downscaled?.method || state.downscaleContext?.method || "bilinear";
+          const upscale = state.downscaled?.upscale_factor || state.downscaleContext?.upscale || 4;
+          const varCount = Object.keys(state.downscaled?.predictions || {}).length;
+          m3 = `${method} x${upscale} | ${varCount} vars`;
+        } else {
+          s3 = "idle";
+          m3 = "Ready to downscale";
+        }
+      }
+
+      let s4 = "blocked";
+      let m4 = "Waiting for Regional Downscale";
+      if (downscaledReady) {
+        if (state.errors.llm) {
+          s4 = "error";
+          m4 = "Advisory failed";
+        } else if (state.busy.llm) {
+          s4 = "running";
+          m4 = "Generating advisory";
+        } else if (advisoryReady) {
+          s4 = "done";
+          m4 = `${state.advisory?.severity || "unknown"} advisory ready`;
+        } else {
+          s4 = "idle";
+          m4 = "Ready to generate";
+        }
+      }
+
+      let activeStep = 4;
+      if (s1 === "running" || s1 === "error" || s1 === "idle") activeStep = 1;
+      else if (s2 === "running" || s2 === "error" || s2 === "idle") activeStep = 2;
+      else if (s3 === "running" || s3 === "error" || s3 === "idle") activeStep = 3;
+      else if (s4 === "running" || s4 === "error" || s4 === "idle") activeStep = 4;
+
+      setFlowStep(1, s1, m1, activeStep === 1);
+      setFlowStep(2, s2, m2, activeStep === 2);
+      setFlowStep(3, s3, m3, activeStep === 3);
+      setFlowStep(4, s4, m4, activeStep === 4);
     }
 
     function setImage(slot, blob) {
@@ -353,16 +908,7 @@
       el("btnDownscale").disabled = !extractedReady;
       el("btnDownscaleMap").disabled = !downscaledReady;
       el("btnInterpret").disabled = !downscaledReady;
-
-      if (!forecastDone) {
-        setFlow(1);
-      } else if (!extractedReady) {
-        setFlow(2);
-      } else if (!downscaledReady) {
-        setFlow(3);
-      } else {
-        setFlow(4);
-      }
+      updateFlowSummary();
     }
 
     async function loadRegions() {
@@ -418,6 +964,8 @@
         const res = await api(`/api/forecast/${state.jobId}`);
         const data = await res.json();
         state.forecastStatus = data.status;
+        state.forecastProgress = data.progress || null;
+        state.errors.forecast = null;
 
         const progress = data.progress ? ` | ${data.progress}` : "";
         const level = data.status === "failed" ? "err" : (data.status === "completed" ? "ok" : "warn");
@@ -434,12 +982,15 @@
         }
 
         if (data.status === "failed") {
+          state.errors.forecast = "failed";
           stopForecastPolling();
         }
       } catch (e) {
+        state.errors.forecast = "status";
         setStatus("forecastStatus", `Status error: ${e.message}`, "err");
         stopForecastPolling();
       } finally {
+        state.busy.forecast = false;
         updateControls();
       }
     }
@@ -451,6 +1002,16 @@
     }
 
     el("btnForecast").onclick = async () => {
+      state.busy.forecast = true;
+      state.errors.forecast = null;
+      state.errors.extract = null;
+      state.errors.downscale = null;
+      state.errors.llm = null;
+      state.forecastProgress = null;
+      state.extractContext = null;
+      state.downscaleContext = null;
+      state.advisory = null;
+      updateControls();
       try {
         stopForecastPolling();
         state.extracted = null;
@@ -473,6 +1034,7 @@
         const data = await res.json();
         state.jobId = data.job_id;
         state.forecastStatus = data.status;
+        state.forecastProgress = data.progress || null;
 
         setStatus("forecastStatus", `Started job ${data.job_id}, status=${data.status}`, "warn");
 
@@ -482,8 +1044,10 @@
           startForecastPolling();
         }
       } catch (e) {
+        state.errors.forecast = "start";
         setStatus("forecastStatus", `Error: ${e.message}`, "err");
       } finally {
+        state.busy.forecast = false;
         updateControls();
       }
     };
@@ -492,9 +1056,22 @@
       if (!state.jobId) return;
       const region = el("regionSel").value;
       const step = Number(el("step").value || 0);
+      state.busy.extract = true;
+      state.errors.extract = null;
+      state.extractContext = { region, step };
+      updateControls();
       try {
         const res = await api(`/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&step=${step}`);
         state.extracted = await res.json();
+        state.downscaled = null;
+        state.downscaleContext = null;
+        state.advisory = null;
+        state.errors.downscale = null;
+        state.errors.llm = null;
+        clearImage("downscale", "Downscale map will appear after downscaling.");
+        setStatus("downscaleStatus", "Ready for downscale.");
+        setStatus("llmStatus", "Waiting for downscale output.");
+        el("llmOut").textContent = "No advisory yet.";
 
         const keys = Object.keys(state.extracted.variables || {});
         if (keys.length) setVariableOptions("regionalVar", keys);
@@ -503,8 +1080,10 @@
 
         await renderRegionalMap();
       } catch (e) {
+        state.errors.extract = "extract";
         setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
       } finally {
+        state.busy.extract = false;
         updateControls();
       }
     };
@@ -521,9 +1100,13 @@
 
     el("btnDownscale").onclick = async () => {
       if (!state.extracted) return;
+      const method = el("methodSel").value;
+      const upscale = Number(el("upscale").value || 4);
+      state.busy.downscale = true;
+      state.errors.downscale = null;
+      state.downscaleContext = { method, upscale };
+      updateControls();
       try {
-        const method = el("methodSel").value;
-        const upscale = Number(el("upscale").value || 4);
         const res = await api("/api/downscale", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -534,6 +1117,10 @@
           }),
         });
         state.downscaled = await res.json();
+        state.advisory = null;
+        state.errors.llm = null;
+        setStatus("llmStatus", "Ready to generate advisory.");
+        el("llmOut").textContent = "No advisory yet.";
 
         const keys = Object.keys(state.downscaled.predictions || {});
         if (keys.length) setVariableOptions("downscaleVar", keys);
@@ -546,8 +1133,10 @@
 
         await renderDownscaleMap();
       } catch (e) {
+        state.errors.downscale = "downscale";
         setStatus("downscaleStatus", `Downscale error: ${e.message}`, "err");
       } finally {
+        state.busy.downscale = false;
         updateControls();
       }
     };
@@ -564,6 +1153,10 @@
 
     el("btnInterpret").onclick = async () => {
       if (!state.downscaled) return;
+      state.busy.llm = true;
+      state.errors.llm = null;
+      state.advisory = null;
+      updateControls();
       try {
         const forecastHour = Number(el("forecastHour").value || 24);
         const res = await api("/api/interpret", {
@@ -575,13 +1168,22 @@
           }),
         });
         const data = await res.json();
+        state.advisory = data;
         setStatus("llmStatus", `Advisory generated (${data.severity || "unknown"}).`, "ok");
         el("llmOut").textContent = JSON.stringify(data, null, 2);
       } catch (e) {
+        state.errors.llm = "llm";
         setStatus("llmStatus", `LLM error: ${e.message}`, "err");
         el("llmOut").textContent = `Error: ${e.message}`;
       }
+      finally {
+        state.busy.llm = false;
+        updateControls();
+      }
     };
+
+    updateGatewayPanel();
+    startGatewayPolling();
 
     loadRegions()
       .then(() => {
@@ -589,10 +1191,12 @@
       })
       .catch((e) => {
         setStatus("forecastStatus", `Bootstrap error: ${e.message}`, "err");
+        updateControls();
       });
 
     window.addEventListener("beforeunload", () => {
       stopForecastPolling();
+      stopGatewayPolling();
       Object.keys(state.mapUrls).forEach((k) => {
         if (state.mapUrls[k]) URL.revokeObjectURL(state.mapUrls[k]);
       });
