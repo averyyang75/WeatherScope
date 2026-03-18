@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: weatherscope
+  labels:
+    app.kubernetes.io/name: weatherscope
+    app.kubernetes.io/part-of: extreme-weather-prediction

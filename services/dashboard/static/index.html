@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WeatherScope Dashboard</title>
+  <style>
+    :root {
+      --bg: #f3f1ec;
+      --ink: #1f2a2e;
+      --muted: #58666d;
+      --card: #ffffff;
+      --line: #d9d4ca;
+      --accent: #0f766e;
+      --accent-2: #c84b31;
+      --ok: #0f766e;
+      --warn: #b45309;
+      --err: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, #f9f6ef 0%, transparent 35%),
+        radial-gradient(circle at 90% 20%, #e7f3ef 0%, transparent 30%),
+        var(--bg);
+    }
+    .wrap {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 2rem;
+      letter-spacing: 0.4px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .flow-step {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    .flow-step.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 700;
+      background: #f0f9f7;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 20px rgba(22, 28, 31, 0.06);
+      min-height: 280px;
+    }
+    .step-card { grid-column: span 6; }
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .title-row h3 { margin: 0; }
+    .step-badge {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    input, select, button {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 0.95rem;
+      background: #fff;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+    button.alt { background: var(--accent-2); }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 6px 0 10px;
+      min-height: 20px;
+    }
+    .status.ok { color: var(--ok); }
+    .status.warn { color: var(--warn); }
+    .status.err { color: var(--err); }
+
+    .map-wrap {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      min-height: 130px;
+      background: #fcfcfb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .map-wrap img {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 10px;
+    }
+
+    pre {
+      background: #101417;
+      color: #d8e2e8;
+      padding: 10px;
+      border-radius: 10px;
+      overflow: auto;
+      font-size: 0.84rem;
+      max-height: 260px;
+      margin: 0;
+    }
+
+    @media (max-width: 1050px) {
+      .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .step-card { grid-column: span 12; }
+    }
+    @media (max-width: 680px) {
+      .flow { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>WeatherScope</h1>
+
+    <div class="flow">
+      <div id="flow1" class="flow-step active">1. Global Forecast</div>
+      <div id="flow2" class="flow-step">2. Regional Extraction</div>
+      <div id="flow3" class="flow-step">3. Downscale</div>
+      <div id="flow4" class="flow-step">4. LLM Advisory</div>
+    </div>
+
+    <div class="grid">
+      <section class="card step-card">
+        <div class="title-row">
+          <h3>Global Forecast</h3>
+          <span class="step-badge">Step 1</span>
+        </div>
+        <div class="controls">
+          <label for="leadTime">lead_time</label>
+          <input id="leadTime" type="number" min="6" max="240" value="24" />
+          <button id="btnForecast">Start Forecast</button>
+        </div>
+        <div class="status" id="forecastStatus">Idle</div>
+        <div class="map-wrap">
+          <img id="globalMap" alt="global forecast map" hidden />
+          <div id="globalMapHint" class="hint">Global map will appear when forecast completes.</div>
+        </div>
+      </section>
+
+      <section class="card step-card">
+        <div class="title-row">
+          <h3>Regional Extraction</h3>
+          <span class="step-badge">Step 2</span>
+        </div>
+        <div class="controls">
+          <select id="regionSel"></select>
+          <input id="step" type="number" min="0" value="0" />
+          <button id="btnExtract">Extract Regional</button>
+          <label for="regionalVar">variable</label>
+          <select id="regionalVar">
+            <option value="t2m">t2m</option>
+          </select>
+          <button id="btnRegionalMap" class="alt">Render Regional Map</button>
+        </div>
+        <div class="status" id="regionalStatus">Waiting for global forecast completion.</div>
+        <div class="map-wrap">
+          <img id="regionalMap" alt="regional map" hidden />
+          <div id="regionalMapHint" class="hint">Regional map will appear after extraction.</div>
+        </div>
+      </section>
+
+      <section class="card step-card">
+        <div class="title-row">
+          <h3>Downscale</h3>
+          <span class="step-badge">Step 3</span>
+        </div>
+        <div class="controls">
+          <label for="methodSel">method</label>
+          <select id="methodSel">
+            <option value="bilinear">bilinear</option>
+            <option value="bicubic">bicubic</option>
+          </select>
+          <label for="upscale">upscale</label>
+          <input id="upscale" type="number" min="1" max="8" value="4" />
+          <button id="btnDownscale">Run Downscale</button>
+          <label for="downscaleVar">variable</label>
+          <select id="downscaleVar">
+            <option value="t2m">t2m</option>
+          </select>
+          <button id="btnDownscaleMap" class="alt">Render Downscale Map</button>
+        </div>
+        <div class="status" id="downscaleStatus">Waiting for regional extraction.</div>
+        <div class="map-wrap">
+          <img id="downscaleMap" alt="downscale map" hidden />
+          <div id="downscaleMapHint" class="hint">Downscale map will appear after downscaling.</div>
+        </div>
+      </section>
+
+      <section class="card step-card">
+        <div class="title-row">
+          <h3>LLM Advisory</h3>
+          <span class="step-badge">Step 4</span>
+        </div>
+        <div class="controls">
+          <label for="forecastHour">forecast_hour</label>
+          <input id="forecastHour" type="number" min="1" value="24" />
+          <button id="btnInterpret">Generate Advisory</button>
+        </div>
+        <div class="status" id="llmStatus">Waiting for downscale output.</div>
+        <pre id="llmOut">No advisory yet.</pre>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      jobId: null,
+      forecastStatus: null,
+      regions: {},
+      extracted: null,
+      downscaled: null,
+      forecastPollTimer: null,
+      mapUrls: {
+        global: null,
+        regional: null,
+        downscale: null,
+      },
+    };
+
+    const el = (id) => document.getElementById(id);
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res;
+    }
+
+    function setStatus(id, message, level = "") {
+      const node = el(id);
+      node.textContent = message;
+      node.className = `status${level ? ` ${level}` : ""}`;
+    }
+
+    function setFlow(step) {
+      for (let i = 1; i <= 4; i++) {
+        el(`flow${i}`).classList.toggle("active", i <= step);
+      }
+    }
+
+    function setImage(slot, blob) {
+      const mapNode = el(`${slot}Map`);
+      const hintNode = el(`${slot}MapHint`);
+      if (state.mapUrls[slot]) {
+        URL.revokeObjectURL(state.mapUrls[slot]);
+      }
+      state.mapUrls[slot] = URL.createObjectURL(blob);
+      mapNode.src = state.mapUrls[slot];
+      mapNode.hidden = false;
+      hintNode.hidden = true;
+    }
+
+    function clearImage(slot, hintText) {
+      const mapNode = el(`${slot}Map`);
+      const hintNode = el(`${slot}MapHint`);
+      if (state.mapUrls[slot]) {
+        URL.revokeObjectURL(state.mapUrls[slot]);
+        state.mapUrls[slot] = null;
+      }
+      mapNode.removeAttribute("src");
+      mapNode.hidden = true;
+      hintNode.hidden = false;
+      hintNode.textContent = hintText;
+    }
+
+    function setVariableOptions(selectId, keys) {
+      const sel = el(selectId);
+      const current = sel.value;
+      sel.innerHTML = "";
+      keys.forEach((k) => {
+        const op = document.createElement("option");
+        op.value = k;
+        op.textContent = k;
+        sel.appendChild(op);
+      });
+      if (keys.includes(current)) {
+        sel.value = current;
+      }
+    }
+
+    function stopForecastPolling() {
+      if (state.forecastPollTimer) {
+        clearInterval(state.forecastPollTimer);
+        state.forecastPollTimer = null;
+      }
+    }
+
+    function updateControls() {
+      const forecastDone = state.forecastStatus === "completed";
+      const extractedReady = !!state.extracted;
+      const downscaledReady = !!state.downscaled;
+
+      el("btnExtract").disabled = !forecastDone;
+      el("btnRegionalMap").disabled = !extractedReady;
+      el("btnDownscale").disabled = !extractedReady;
+      el("btnDownscaleMap").disabled = !downscaledReady;
+      el("btnInterpret").disabled = !downscaledReady;
+
+      if (!forecastDone) {
+        setFlow(1);
+      } else if (!extractedReady) {
+        setFlow(2);
+      } else if (!downscaledReady) {
+        setFlow(3);
+      } else {
+        setFlow(4);
+      }
+    }
+
+    async function loadRegions() {
+      const res = await api("/api/regions");
+      state.regions = await res.json();
+      const sel = el("regionSel");
+      sel.innerHTML = "";
+      Object.keys(state.regions).forEach((k) => {
+        const op = document.createElement("option");
+        op.value = k;
+        op.textContent = `${k} (${state.regions[k].name})`;
+        sel.appendChild(op);
+      });
+    }
+
+    async function renderGlobalMap(jobId) {
+      const res = await api(`/api/global-map/${jobId}?variable=t2m&step=0`);
+      const blob = await res.blob();
+      setImage("global", blob);
+    }
+
+    async function renderRegionalMap() {
+      const payload = {
+        ...state.extracted,
+        variable: el("regionalVar").value,
+      };
+      const res = await api("/api/map/regional", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const blob = await res.blob();
+      setImage("regional", blob);
+    }
+
+    async function renderDownscaleMap() {
+      const payload = {
+        ...state.downscaled,
+        variable: el("downscaleVar").value,
+      };
+      const res = await api("/api/map/downscale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const blob = await res.blob();
+      setImage("downscale", blob);
+    }
+
+    async function refreshForecastStatus() {
+      if (!state.jobId) return;
+      try {
+        const res = await api(`/api/forecast/${state.jobId}`);
+        const data = await res.json();
+        state.forecastStatus = data.status;
+
+        const progress = data.progress ? ` | ${data.progress}` : "";
+        const level = data.status === "failed" ? "err" : (data.status === "completed" ? "ok" : "warn");
+        setStatus("forecastStatus", `job=${data.job_id} status=${data.status}${progress}`, level);
+
+        if (data.status === "completed") {
+          stopForecastPolling();
+          try {
+            await renderGlobalMap(data.job_id);
+            setStatus("forecastStatus", `job=${data.job_id} status=completed | global map ready`, "ok");
+          } catch (err) {
+            setStatus("forecastStatus", `job=${data.job_id} completed, map error: ${err.message}`, "warn");
+          }
+        }
+
+        if (data.status === "failed") {
+          stopForecastPolling();
+        }
+      } catch (e) {
+        setStatus("forecastStatus", `Status error: ${e.message}`, "err");
+        stopForecastPolling();
+      } finally {
+        updateControls();
+      }
+    }
+
+    function startForecastPolling() {
+      stopForecastPolling();
+      refreshForecastStatus();
+      state.forecastPollTimer = setInterval(refreshForecastStatus, 5000);
+    }
+
+    el("btnForecast").onclick = async () => {
+      try {
+        stopForecastPolling();
+        state.extracted = null;
+        state.downscaled = null;
+        state.forecastStatus = null;
+        clearImage("global", "Global map will appear when forecast completes.");
+        clearImage("regional", "Regional map will appear after extraction.");
+        clearImage("downscale", "Downscale map will appear after downscaling.");
+        setStatus("regionalStatus", "Waiting for global forecast completion.");
+        setStatus("downscaleStatus", "Waiting for regional extraction.");
+        setStatus("llmStatus", "Waiting for downscale output.");
+        el("llmOut").textContent = "No advisory yet.";
+
+        const leadTime = Number(el("leadTime").value || 24);
+        const res = await api("/api/forecast", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lead_time: leadTime }),
+        });
+        const data = await res.json();
+        state.jobId = data.job_id;
+        state.forecastStatus = data.status;
+
+        setStatus("forecastStatus", `Started job ${data.job_id}, status=${data.status}`, "warn");
+
+        if (data.status === "completed") {
+          await refreshForecastStatus();
+        } else if (data.status !== "failed") {
+          startForecastPolling();
+        }
+      } catch (e) {
+        setStatus("forecastStatus", `Error: ${e.message}`, "err");
+      } finally {
+        updateControls();
+      }
+    };
+
+    el("btnExtract").onclick = async () => {
+      if (!state.jobId) return;
+      const region = el("regionSel").value;
+      const step = Number(el("step").value || 0);
+      try {
+        const res = await api(`/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&step=${step}`);
+        state.extracted = await res.json();
+
+        const keys = Object.keys(state.extracted.variables || {});
+        if (keys.length) setVariableOptions("regionalVar", keys);
+
+        setStatus("regionalStatus", `Extracted ${region}, step=${step}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
+
+        await renderRegionalMap();
+      } catch (e) {
+        setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
+      } finally {
+        updateControls();
+      }
+    };
+
+    el("btnRegionalMap").onclick = async () => {
+      if (!state.extracted) return;
+      try {
+        await renderRegionalMap();
+        setStatus("regionalStatus", `Regional map updated (${el("regionalVar").value}).`, "ok");
+      } catch (e) {
+        setStatus("regionalStatus", `Regional map error: ${e.message}`, "err");
+      }
+    };
+
+    el("btnDownscale").onclick = async () => {
+      if (!state.extracted) return;
+      try {
+        const method = el("methodSel").value;
+        const upscale = Number(el("upscale").value || 4);
+        const res = await api("/api/downscale", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...state.extracted,
+            upscale_factor: upscale,
+            method,
+          }),
+        });
+        state.downscaled = await res.json();
+
+        const keys = Object.keys(state.downscaled.predictions || {});
+        if (keys.length) setVariableOptions("downscaleVar", keys);
+
+        setStatus(
+          "downscaleStatus",
+          `Downscaled ${method} x${upscale} | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
+          "ok"
+        );
+
+        await renderDownscaleMap();
+      } catch (e) {
+        setStatus("downscaleStatus", `Downscale error: ${e.message}`, "err");
+      } finally {
+        updateControls();
+      }
+    };
+
+    el("btnDownscaleMap").onclick = async () => {
+      if (!state.downscaled) return;
+      try {
+        await renderDownscaleMap();
+        setStatus("downscaleStatus", `Downscale map updated (${el("downscaleVar").value}).`, "ok");
+      } catch (e) {
+        setStatus("downscaleStatus", `Downscale map error: ${e.message}`, "err");
+      }
+    };
+
+    el("btnInterpret").onclick = async () => {
+      if (!state.downscaled) return;
+      try {
+        const forecastHour = Number(el("forecastHour").value || 24);
+        const res = await api("/api/interpret", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            forecast_hour: forecastHour,
+            weather_condition: state.downscaled,
+          }),
+        });
+        const data = await res.json();
+        setStatus("llmStatus", `Advisory generated (${data.severity || "unknown"}).`, "ok");
+        el("llmOut").textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        setStatus("llmStatus", `LLM error: ${e.message}`, "err");
+        el("llmOut").textContent = `Error: ${e.message}`;
+      }
+    };
+
+    loadRegions()
+      .then(() => {
+        updateControls();
+      })
+      .catch((e) => {
+        setStatus("forecastStatus", `Bootstrap error: ${e.message}`, "err");
+      });
+
+    window.addEventListener("beforeunload", () => {
+      stopForecastPolling();
+      Object.keys(state.mapUrls).forEach((k) => {
+        if (state.mapUrls[k]) URL.revokeObjectURL(state.mapUrls[k]);
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+# LLM Interpretation Service Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-config
+  namespace: weatherscope
+data:
+  # Switch between "ollama" and "vllm" here.
+  # For Docker Model Runner/vllm-metal on Mac host:
+  #   LLM_BACKEND=vllm
+  #   VLLM_BASE_URL=http://host.k3d.internal:12434
+  #   VLLM_API_PREFIX=/engines/v1
+  #   LLM_MODEL=huggingface.co/mlx-community/llama-3.2-3b-instruct-4bit:latest
+  #
+  # For a standard vLLM OpenAI server:
+  #   VLLM_BASE_URL=http://<vllm-host>:8000
+  #   VLLM_API_PREFIX=/v1
+  LLM_BACKEND: "vllm"
+  OLLAMA_BASE_URL: "http://ollama-service:11434"
+  VLLM_BASE_URL: "http://host.k3d.internal:12434"
+  VLLM_API_PREFIX: "/engines/v1"
+  LLM_MODEL: "huggingface.co/mlx-community/llama-3.2-3b-instruct-4bit:latest"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-deployment
+  namespace: weatherscope
+  labels:
+    app: llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm
+  template:
+    metadata:
+      labels:
+        app: llm
+    spec:
+      containers:
+        - name: llm
+          image: weatherscope-llm:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: llm-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-service
+  namespace: weatherscope
+spec:
+  selector:
+    app: llm
+  ports:
+    - protocol: TCP
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

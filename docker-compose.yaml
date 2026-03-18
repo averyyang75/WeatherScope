@@ -1,0 +1,62 @@
+# Docker Compose for local development
+# Simpler alternative to full K8s setup for testing
+#
+# NOTE: FourCastNet runs natively on macOS (for MPS acceleration)
+#       Start it separately: ./scripts/run-fourcastnet.sh
+
+version: '3.8'
+
+services:
+  # WeatherScope Inference Service (bilinear/bicubic interpolation)
+  inference:
+    build:
+      context: ./services/inference
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - UPSCALE_FACTOR=4
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WeatherScope Map Service (map rendering)
+  map:
+    build:
+      context: ./services/map
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # LLM Interpretation Service
+  llm:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - LLM_BACKEND=ollama
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - LLM_MODEL=llama3.2:3b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - inference
+      - map
+
+networks:
+  default:
+    name: weatherscope-network

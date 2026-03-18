@@ -1,0 +1,74 @@
+# WeatherScope Dashboard Service Deployment
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: weatherscope
+data:
+  FOURCASTNET_URL: "http://fourcastnet-service:8003"
+  INFERENCE_URL: "http://inference-service:8000"
+  MAP_URL: "http://map-service:8004"
+  LLM_URL: "http://llm-service:8002"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-deployment
+  namespace: weatherscope
+  labels:
+    app: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: weatherscope-dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8010
+          envFrom:
+            - configMapRef:
+                name: dashboard-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8010
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8010
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: weatherscope
+spec:
+  selector:
+    app: dashboard
+  ports:
+    - protocol: TCP
+      port: 8010
+      targetPort: 8010
+  type: ClusterIP

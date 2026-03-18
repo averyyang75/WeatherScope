@@ -1,0 +1,293 @@
+# Kgateway Setup for WeatherScope
+# This provides unified HTTP routing for all WeatherScope services
+# The K8s Gateway acts as the unified orchestrator for all services
+
+---
+# GatewayClass for Kgateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kgateway
+spec:
+  controllerName: kgateway.dev/kgateway
+
+---
+# Gateway with single HTTP listener for all traffic
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: weatherscope-gateway
+  namespace: weatherscope
+  annotations:
+    # Enable request logging for debugging
+    kgateway.dev/access-log: "true"
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+
+---
+# =============================================================================
+# HTTPRoutes - Define API routing rules
+# =============================================================================
+
+# Main route for FourCastNet service (orchestrator for weather pipeline)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fourcastnet-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    # Forecast endpoints (main pipeline entry point)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /forecast
+      backendRefs:
+        - name: fourcastnet-service
+          port: 8003
+      timeouts:
+        request: 600s  # Forecasts can take time
+    # Region listing
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /regions
+      backendRefs:
+        - name: fourcastnet-service
+          port: 8003
+    # Cache management
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /cache
+      backendRefs:
+        - name: fourcastnet-service
+          port: 8003
+
+---
+# Route for Inference service (downscaling)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: inference-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    # Downscaling endpoint (bilinear/bicubic interpolation)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /downscale
+      backendRefs:
+        - name: inference-service
+          port: 8000
+
+---
+# Route for Map service (map rendering)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: map-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /map
+      backendRefs:
+        - name: map-service
+          port: 8004
+
+---
+# Route for LLM service
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    # Weather interpretation
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /interpret
+      backendRefs:
+        - name: llm-service
+          port: 8002
+      timeouts:
+        request: 300s
+        backendRequest: 295s
+    # Text generation
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /generate
+      backendRefs:
+        - name: llm-service
+          port: 8002
+      timeouts:
+        request: 300s
+        backendRequest: 295s
+    # LLM runtime config
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /config
+      backendRefs:
+        - name: llm-service
+          port: 8002
+      timeouts:
+        request: 300s
+        backendRequest: 295s
+
+---
+# Route for Dashboard service
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dashboard-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    # Dashboard UI
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /dashboard
+      backendRefs:
+        - name: dashboard-service
+          port: 8010
+      timeouts:
+        request: 300s
+        backendRequest: 295s
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+    # Dashboard proxy APIs
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: dashboard-service
+          port: 8010
+      timeouts:
+        request: 600s
+        backendRequest: 590s
+
+---
+# Health check routes
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: health-route
+  namespace: weatherscope
+spec:
+  parentRefs:
+    - name: weatherscope-gateway
+      sectionName: http
+  rules:
+    # Root health (routes to fourcastnet as primary service)
+    - matches:
+        - path:
+            type: Exact
+            value: /
+        - path:
+            type: Exact
+            value: /health
+      backendRefs:
+        - name: fourcastnet-service
+          port: 8003
+    # Service-specific health checks (use PathPrefix for ReplacePrefixMatch compatibility)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health/fourcastnet
+      backendRefs:
+        - name: fourcastnet-service
+          port: 8003
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /health
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health/inference
+      backendRefs:
+        - name: inference-service
+          port: 8000
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /health
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health/llm
+      backendRefs:
+        - name: llm-service
+          port: 8002
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /health
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health/map
+      backendRefs:
+        - name: map-service
+          port: 8004
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /health
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /health/dashboard
+      backendRefs:
+        - name: dashboard-service
+          port: 8010
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /health

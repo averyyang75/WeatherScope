@@ -1,0 +1,72 @@
+# FourCastNet Bridge Deployment + Service
+# Proxies traffic from Kgateway to native macOS FourCastNet service
+# running on host port 8003.
+#
+# Why proxy instead of ExternalName:
+# - Some gateway dataplanes mark ExternalName backends unhealthy.
+# - A normal ClusterIP service with pod endpoints is reliably health-routable.
+#
+# Start FourCastNet on host with:
+#   ./scripts/run-fourcastnet.sh
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fourcastnet-bridge
+  namespace: weatherscope
+  labels:
+    app: fourcastnet-bridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fourcastnet-bridge
+  template:
+    metadata:
+      labels:
+        app: fourcastnet-bridge
+    spec:
+      containers:
+        - name: socat
+          image: alpine/socat:1.8.0.3
+          args:
+            - "TCP-LISTEN:8003,fork,reuseaddr"
+            - "TCP:host.k3d.internal:8003"
+          ports:
+            - containerPort: 8003
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "20m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          readinessProbe:
+            tcpSocket:
+              port: 8003
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fourcastnet-service
+  namespace: weatherscope
+  labels:
+    app: fourcastnet
+spec:
+  selector:
+    app: fourcastnet-bridge
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8003
+      targetPort: 8003
+  type: ClusterIP
