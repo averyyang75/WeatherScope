@@ -326,6 +326,18 @@
       max-height: 260px;
       margin: 0;
     }
+    #llmOut {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-height: 84px;
+      max-height: 260px;
+      transition: max-height 0.2s ease, min-height 0.2s ease;
+    }
+    #llmOut.has-content {
+      min-height: 200px;
+      max-height: 460px;
+    }
 
     @media (max-width: 1050px) {
       .gateway-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -744,6 +756,12 @@
       node.className = `status${level ? ` ${level}` : ""}`;
     }
 
+    function setAdvisoryOutput(text, hasContent = false) {
+      const node = el("llmOut");
+      node.textContent = text;
+      node.classList.toggle("has-content", hasContent);
+    }
+
     function setImage(slot, blob) {
       const mapNode = el(`${slot}Map`);
       const hintNode = el(`${slot}MapHint`);
@@ -916,7 +934,7 @@
         setStatus("regionalStatus", "Waiting for global forecast completion.");
         setStatus("downscaleStatus", "Waiting for regional extraction.");
         setStatus("llmStatus", "Waiting for downscale output.");
-        el("llmOut").textContent = "No advisory yet.";
+        setAdvisoryOutput("No advisory yet.");
 
         const leadTime = Number(el("leadTime").value || 24);
         const res = await api("/api/forecast", {
@@ -964,7 +982,7 @@
         clearImage("downscale", "Downscale map will appear after downscaling.");
         setStatus("downscaleStatus", "Ready for downscale.");
         setStatus("llmStatus", "Waiting for downscale output.");
-        el("llmOut").textContent = "No advisory yet.";
+        setAdvisoryOutput("No advisory yet.");
 
         const keys = Object.keys(state.extracted.variables || {});
         if (keys.length) setVariableOptions("regionalVar", keys);
@@ -1013,7 +1031,7 @@
         state.advisory = null;
         state.errors.llm = null;
         setStatus("llmStatus", "Ready to generate advisory.");
-        el("llmOut").textContent = "No advisory yet.";
+        setAdvisoryOutput("No advisory yet.");
 
         const keys = Object.keys(state.downscaled.predictions || {});
         if (keys.length) setVariableOptions("downscaleVar", keys);
@@ -1063,11 +1081,11 @@
         const data = await res.json();
         state.advisory = data;
         setStatus("llmStatus", `Advisory generated (${data.severity || "unknown"}).`, "ok");
-        el("llmOut").textContent = JSON.stringify(data, null, 2);
+        setAdvisoryOutput(JSON.stringify(data, null, 2), true);
       } catch (e) {
         state.errors.llm = "llm";
         setStatus("llmStatus", `LLM error: ${e.message}`, "err");
-        el("llmOut").textContent = `Error: ${e.message}`;
+        setAdvisoryOutput(`Error: ${e.message}`, true);
       }
       finally {
         state.busy.llm = false;
