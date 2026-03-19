@@ -16,7 +16,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import urllib.request
 import io
 
@@ -118,10 +118,17 @@ era5_cache_lock = threading.Lock()
 
 class ForecastRequest(BaseModel):
     """Request for weather forecast."""
-    lead_time: int = Field(24, ge=6, le=240, description="Forecast hours (6-240)")
+    lead_time: int = Field(24, ge=6, le=240, description="Forecast hours (6-240, multiples of 6)")
     date: Optional[str] = Field(None, description="Date YYYYMMDD (default: 5 days ago for CDS)")
     time: str = Field("1200", description="Time HHMM (0000 or 1200)")
     input_source: str = Field("cds", description="Data input: 'cds' (default), 'mars', or 'ecmwf-open-data'")
+
+    @field_validator("lead_time")
+    @classmethod
+    def validate_lead_time_step(cls, value: int) -> int:
+        if value % 6 != 0:
+            raise ValueError("lead_time must be in 6-hour increments (6, 12, ..., 240)")
+        return value
 
 class ForecastStatus(BaseModel):
     """Status of a forecast job."""

@@ -395,8 +395,18 @@
         </div>
         <div class="controls">
           <label for="leadTime">lead_time</label>
-          <input id="leadTime" type="number" min="6" max="240" value="24" />
+          <input id="leadTime" type="number" min="6" max="240" step="6" value="24" title="Use multiples of 6 hours" />
           <button id="btnForecast">Start Forecast</button>
+          <label for="globalVar">variable</label>
+          <select id="globalVar">
+            <option value="t2m">t2m</option>
+            <option value="u10">u10</option>
+            <option value="v10">v10</option>
+            <option value="msl">msl</option>
+            <option value="tp">tp</option>
+            <option value="wind">wind</option>
+          </select>
+          <button id="btnGlobalMap" class="alt">Render Map</button>
         </div>
         <div class="status" id="forecastStatus">Idle</div>
         <div class="map-wrap">
@@ -412,13 +422,12 @@
         </div>
         <div class="controls">
           <select id="regionSel"></select>
-          <input id="step" type="number" min="0" value="0" />
           <button id="btnExtract">Extract Regional</button>
           <label for="regionalVar">variable</label>
           <select id="regionalVar">
             <option value="t2m">t2m</option>
           </select>
-          <button id="btnRegionalMap" class="alt">Render Regional Map</button>
+          <button id="btnRegionalMap" class="alt">Render Map</button>
         </div>
         <div class="status" id="regionalStatus">Waiting for global forecast completion.</div>
         <div class="map-wrap">
@@ -438,14 +447,12 @@
             <option value="bilinear">bilinear</option>
             <option value="bicubic">bicubic</option>
           </select>
-          <label for="upscale">upscale</label>
-          <input id="upscale" type="number" min="1" max="8" value="4" />
           <button id="btnDownscale">Run Downscale</button>
           <label for="downscaleVar">variable</label>
           <select id="downscaleVar">
             <option value="t2m">t2m</option>
           </select>
-          <button id="btnDownscaleMap" class="alt">Render Downscale Map</button>
+          <button id="btnDownscaleMap" class="alt">Render Map</button>
         </div>
         <div class="status" id="downscaleStatus">Waiting for regional extraction.</div>
         <div class="map-wrap">
@@ -460,8 +467,6 @@
           <span class="step-badge">Step 4</span>
         </div>
         <div class="controls">
-          <label for="forecastHour">forecast_hour</label>
-          <input id="forecastHour" type="number" min="1" value="24" />
           <button id="btnInterpret">Generate Advisory</button>
         </div>
         <div class="status" id="llmStatus">Waiting for downscale output.</div>
@@ -481,6 +486,7 @@
       downscaled: null,
       downscaleContext: null,
       advisory: null,
+      forecastLeadTime: null,
       errors: {
         forecast: null,
         extract: null,
@@ -814,6 +820,7 @@
       const extractedReady = !!state.extracted;
       const downscaledReady = !!state.downscaled;
 
+      el("btnGlobalMap").disabled = !forecastDone;
       el("btnExtract").disabled = !forecastDone;
       el("btnRegionalMap").disabled = !extractedReady;
       el("btnDownscale").disabled = !extractedReady;
@@ -836,9 +843,11 @@
     }
 
     async function renderGlobalMap(jobId) {
-      const res = await api(`/api/global-map/${jobId}?variable=t2m&step=0`);
+      const variable = el("globalVar").value || "t2m";
+      const res = await api(`/api/global-map/${jobId}?variable=${encodeURIComponent(variable)}&step=0`);
       const blob = await res.blob();
       setImage("global", blob);
+      return variable;
     }
 
     async function renderRegionalMap() {
@@ -885,8 +894,8 @@
         if (data.status === "completed") {
           stopForecastPolling();
           try {
-            await renderGlobalMap(data.job_id);
-            setStatus("forecastStatus", `job=${data.job_id} status=completed | global map ready`, "ok");
+            const variable = await renderGlobalMap(data.job_id);
+            setStatus("forecastStatus", `job=${data.job_id} status=completed | global map ready (${variable})`, "ok");
           } catch (err) {
             setStatus("forecastStatus", `job=${data.job_id} completed, map error: ${err.message}`, "warn");
           }
@@ -913,12 +922,19 @@
     }
 
     el("btnForecast").onclick = async () => {
+      const leadTime = Number(el("leadTime").value || 24);
+      if (!Number.isInteger(leadTime) || leadTime < 6 || leadTime > 240 || leadTime % 6 !== 0) {
+        setStatus("forecastStatus", "lead_time must be a multiple of 6 between 6 and 240 (e.g., 6, 12, ..., 240).", "err");
+        return;
+      }
+
       state.busy.forecast = true;
       state.errors.forecast = null;
       state.errors.extract = null;
       state.errors.downscale = null;
       state.errors.llm = null;
       state.forecastProgress = null;
+      state.forecastLeadTime = null;
       state.extractContext = null;
       state.downscaleContext = null;
       state.advisory = null;
@@ -936,7 +952,6 @@
         setStatus("llmStatus", "Waiting for downscale output.");
         setAdvisoryOutput("No advisory yet.");
 
-        const leadTime = Number(el("leadTime").value || 24);
         const res = await api("/api/forecast", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -946,6 +961,7 @@
         state.jobId = data.job_id;
         state.forecastStatus = data.status;
         state.forecastProgress = data.progress || null;
+        state.forecastLeadTime = leadTime;
 
         setStatus("forecastStatus", `Started job ${data.job_id}, status=${data.status}`, "warn");
 
@@ -963,10 +979,20 @@
       }
     };
 
+    el("btnGlobalMap").onclick = async () => {
+      if (!state.jobId || state.forecastStatus !== "completed") return;
+      try {
+        const variable = await renderGlobalMap(state.jobId);
+        setStatus("forecastStatus", `job=${state.jobId} status=completed | global map updated (${variable})`, "ok");
+      } catch (e) {
+        setStatus("forecastStatus", `Global map error: ${e.message}`, "err");
+      }
+    };
+
     el("btnExtract").onclick = async () => {
       if (!state.jobId) return;
       const region = el("regionSel").value;
-      const step = Number(el("step").value || 0);
+      const step = 0;
       state.busy.extract = true;
       state.errors.extract = null;
       state.extractContext = { region, step };
@@ -1012,7 +1038,7 @@
     el("btnDownscale").onclick = async () => {
       if (!state.extracted) return;
       const method = el("methodSel").value;
-      const upscale = Number(el("upscale").value || 4);
+      const upscale = 4;
       state.busy.downscale = true;
       state.errors.downscale = null;
       state.downscaleContext = { method, upscale };
@@ -1069,7 +1095,7 @@
       state.advisory = null;
       updateControls();
       try {
-        const forecastHour = Number(el("forecastHour").value || 24);
+        const forecastHour = Number(state.forecastLeadTime || 24);
         const res = await api("/api/interpret", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
