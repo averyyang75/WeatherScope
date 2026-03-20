@@ -110,7 +110,7 @@ class RegionalMapRequest(BaseModel):
     region_name: str | None = Field(None, description="Optional region name")
     region_info: Dict[str, Any] | None = Field(None, description="Optional region metadata")
     variable: str = Field("t2m", description="Variable to render, default t2m")
-    step: int | None = Field(None, ge=0, description="Optional forecast step label")
+    step: int | None = Field(None, ge=-1, description="Optional forecast step label (-1 for latest)")
 
     @model_validator(mode="before")
     @classmethod
@@ -142,7 +142,7 @@ class DownscaleMapRequest(BaseModel):
     region_name: str | None = Field(None, description="Optional region name")
     region_info: Dict[str, Any] | None = Field(None, description="Optional region metadata")
     variable: str = Field("t2m", description="Variable to render, default t2m")
-    step: int | None = Field(None, ge=0, description="Optional step label")
+    step: int | None = Field(None, ge=-1, description="Optional step label (-1 for latest)")
     method: str | None = Field(None, description="Optional downscale method label")
     upscale_factor: int | None = Field(None, ge=1, description="Optional upscale factor label")
 
@@ -441,10 +441,9 @@ def _render_single_regional_map(
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     title_region = resolved_region_name or resolved_region or "Region"
-    step_label = f", step={step}" if step is not None else ""
     subtitle_label = f" | {subtitle}" if subtitle else ""
     ax.set_title(
-        f"{title_prefix} Map - {style['label']} ({style['unit']}) - {title_region}{step_label}{subtitle_label}".rstrip()
+        f"{title_prefix} Map - {style['label']} ({style['unit']}) - {title_region}{subtitle_label}".rstrip()
     )
     cbar = plt.colorbar(im, ax=ax, shrink=0.9, pad=0.02)
     cbar.set_label(f"{style['label']} ({style['unit']})")

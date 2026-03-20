@@ -561,12 +561,18 @@ def _extract_global_variable(output_file: Path, short_name: str, step: int):
 
         data_var_name = next(iter(ds.data_vars))
         data_var = ds[data_var_name]
+        selected_step = step
 
         if "step" in data_var.dims:
             step_count = len(data_var.step)
-            if step < 0 or step >= step_count:
-                raise HTTPException(status_code=400, detail=f"Invalid step={step}. Available range: 0..{step_count - 1}")
-            data_var = data_var.isel(step=step)
+            if step == -1:
+                selected_step = step_count - 1
+            if selected_step < 0 or selected_step >= step_count:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid step={step}. Available range: 0..{step_count - 1} (or -1 for latest)",
+                )
+            data_var = data_var.isel(step=selected_step)
 
         if "latitude" not in ds.coords or "longitude" not in ds.coords:
             raise HTTPException(status_code=500, detail="GRIB missing latitude/longitude coordinates")
@@ -574,7 +580,7 @@ def _extract_global_variable(output_file: Path, short_name: str, step: int):
         lats = ds["latitude"].values.astype(np.float32)
         lons = ds["longitude"].values.astype(np.float32)
         values = data_var.values.astype(np.float32)
-        return values, lats, lons
+        return values, lats, lons, selected_step
     finally:
         ds.close()
 
@@ -1009,7 +1015,7 @@ async def get_global_map(job_id: str, variable: str = "t2m", step: int = 0):
 
     Query params:
     - variable: t2m, u10, v10, msl, tp, or wind
-    - step: Forecast step index (default 0)
+    - step: Forecast step index (default 0, use -1 for latest available)
     """
     if job_id not in running_forecasts:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
@@ -1042,9 +1048,13 @@ async def get_global_map(job_id: str, variable: str = "t2m", step: int = 0):
         except Exception:
             cartopy_available = False
 
+        selected_step = step
         if variable_key == "wind":
-            u10, lats, lons = _extract_global_variable(output_file, "10u", step)
-            v10, lats_v, lons_v = _extract_global_variable(output_file, "10v", step)
+            u10, lats, lons, selected_step_u = _extract_global_variable(output_file, "10u", step)
+            v10, lats_v, lons_v, selected_step_v = _extract_global_variable(output_file, "10v", step)
+            if selected_step_u != selected_step_v:
+                raise HTTPException(status_code=500, detail="Wind components resolved to different forecast steps")
+            selected_step = selected_step_u
             u10, lons = _normalize_global_longitude(u10, lons)
             v10, lons_v = _normalize_global_longitude(v10, lons_v)
             if (
@@ -1058,7 +1068,7 @@ async def get_global_map(job_id: str, variable: str = "t2m", step: int = 0):
             plot_data = np.sqrt(u10 ** 2 + v10 ** 2)
         else:
             short_name = GLOBAL_MAP_VARIABLES[variable_key]["shortName"]
-            plot_data, lats, lons = _extract_global_variable(output_file, short_name, step)
+            plot_data, lats, lons, selected_step = _extract_global_variable(output_file, short_name, step)
             plot_data, lons = _normalize_global_longitude(plot_data, lons)
 
         if variable_key == "t2m":
@@ -1120,7 +1130,7 @@ async def get_global_map(job_id: str, variable: str = "t2m", step: int = 0):
         ax.set_ylabel("Latitude (deg)")
         ax.set_title(
             f"FourCastNet Global Map | {meta['label']} ({meta['unit']}) | "
-            f"job={job_id}, step={step}"
+            f"job={job_id}"
         )
 
         cbar = plt.colorbar(im, ax=ax, shrink=0.9, pad=0.02)
@@ -1140,7 +1150,7 @@ async def get_global_map(job_id: str, variable: str = "t2m", step: int = 0):
         buf.seek(0)
         png_bytes = buf.getvalue()
 
-        map_filename = f"{job_id}_map_{variable_key}_global_step{step}.png"
+        map_filename = f"{job_id}_map_{variable_key}_global_step{selected_step}.png"
 
         return Response(
             content=png_bytes,

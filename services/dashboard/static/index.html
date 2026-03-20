@@ -982,7 +982,7 @@
 
     async function renderGlobalMap(jobId) {
       const variable = getSelectedGlobalVariable();
-      const res = await api(`/api/global-map/${jobId}?variable=${encodeURIComponent(variable)}&step=0`);
+      const res = await api(`/api/global-map/${jobId}?variable=${encodeURIComponent(variable)}&step=-1`);
       const blob = await res.blob();
       setImage("global", blob);
       return variable;
@@ -1025,7 +1025,7 @@
     async function runRegionalExtract() {
       if (!state.jobId) return false;
       const region = pickRegionKey();
-      const step = 0;
+      const step = -1;
       const advisoryBounds = getAdvisoryBounds();
       state.busy.extract = true;
       state.errors.extract = null;
@@ -1064,7 +1064,7 @@
         setAdvisoryOutput("No advisory yet.");
 
         const regionLabel = state.extracted.region_name || state.extracted.region || region;
-        setStatus("regionalStatus", `Extracted ${regionLabel}, step=${step}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
+        setStatus("regionalStatus", `Extracted ${regionLabel}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
 
         await renderRegionalMap();
         return true;

@@ -449,7 +449,7 @@ async def forecast_status(job_id: str):
 
 
 @app.get("/api/global-map/{job_id}")
-async def global_map(job_id: str, variable: str = Query("t2m"), step: int = Query(0, ge=0)):
+async def global_map(job_id: str, variable: str = Query("t2m"), step: int = Query(0, ge=-1)):
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.get(
             f"{FOURCASTNET_URL}/forecast/{job_id}/map",
