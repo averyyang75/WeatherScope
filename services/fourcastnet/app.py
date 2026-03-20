@@ -493,8 +493,15 @@ def extract_regional_variables(
                 ds.close()
                 continue
 
-            if "step" in data_var.dims and step < len(data_var.step):
-                data_var = data_var.isel(step=step)
+            if "step" in data_var.dims:
+                step_count = int(len(data_var.step))
+                selected_step = step_count - 1 if step == -1 else step
+                if selected_step < 0 or selected_step >= step_count:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid step={step}. Available range: 0..{step_count - 1} (or -1 for latest)",
+                    )
+                data_var = data_var.isel(step=selected_step)
 
             regional = data_var.sel(
                 latitude=slice(bounds["north"], bounds["south"]),
@@ -542,6 +549,166 @@ def extract_regional_variables(
         "shape": shape,
         "variables": extracted_vars,
         "stats": var_stats,
+    }
+
+
+def extract_regional_variable_series(
+    output_file: Path,
+    region: Optional[str] = None,
+    custom_bounds: Optional[Dict[str, Any]] = None,
+    custom_region_name: Optional[str] = None,
+    step_stride: int = 1,
+) -> dict:
+    """
+    Extract regional slices for all requested forecast steps in one pass per variable.
+    This avoids repeated GRIB decode for each animation frame.
+    """
+    import xarray as xr
+    import numpy as np
+
+    if custom_bounds is not None:
+        normalized_custom_bounds = normalize_bounds_payload(
+            custom_bounds.get("north"),
+            custom_bounds.get("south"),
+            custom_bounds.get("east"),
+            custom_bounds.get("west"),
+        )
+        if normalized_custom_bounds is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid bounds. Require -90<=south<north<=90 and -180<=west/east<=180",
+            )
+        bounds = {
+            "name": custom_region_name or "Custom Region",
+            **normalized_custom_bounds,
+        }
+        region_key = "CUSTOM"
+    else:
+        region_key = resolve_region_key(region or "")
+        if not region_key:
+            raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
+        bounds = REGIONS[region_key]
+
+    stride = max(1, int(step_stride))
+    west_360 = bounds["west"] + 360 if bounds["west"] < 0 else bounds["west"]
+    east_360 = bounds["east"] + 360 if bounds["east"] < 0 else bounds["east"]
+
+    selected_steps: List[int] | None = None
+    selected_hours: Dict[int, float] = {}
+    frames_by_step: Dict[int, Dict[str, Any]] = {}
+
+    for var_name, var_info in PIPELINE_VARIABLES.items():
+        try:
+            ds = xr.open_dataset(
+                output_file,
+                engine="cfgrib",
+                backend_kwargs={"filter_by_keys": {"shortName": var_info["shortName"]}},
+            )
+
+            data_var = None
+            for dv in ds.data_vars:
+                data_var = ds[dv]
+                break
+
+            if data_var is None:
+                logger.warning(f"Variable {var_name} ({var_info['shortName']}) not found, skipping")
+                ds.close()
+                continue
+
+            if "step" in data_var.dims:
+                step_count = int(len(data_var.step))
+                step_hours = _step_values_to_hours(data_var.step.values)
+            else:
+                step_count = 1
+                step_hours = [0.0]
+
+            if selected_steps is None:
+                steps = list(range(0, step_count, stride))
+                if not steps:
+                    steps = [0]
+                if steps[-1] != step_count - 1:
+                    steps.append(step_count - 1)
+                selected_steps = steps
+                for step_idx in selected_steps:
+                    hour_val = step_hours[step_idx] if step_idx < len(step_hours) else float(step_idx)
+                    selected_hours[step_idx] = float(hour_val)
+
+            regional = data_var.sel(
+                latitude=slice(bounds["north"], bounds["south"]),
+                longitude=slice(west_360, east_360),
+            )
+            values = regional.values.astype(np.float32)
+            if "step" not in data_var.dims:
+                values = np.expand_dims(values, axis=0)
+
+            valid_steps = [s for s in (selected_steps or [0]) if 0 <= s < values.shape[0]]
+            for step_idx in valid_steps:
+                var_data = values[step_idx]
+                frame = frames_by_step.setdefault(
+                    step_idx,
+                    {
+                        "step": step_idx,
+                        "hour": selected_hours.get(step_idx, float(step_idx)),
+                        "shape": [int(var_data.shape[0]), int(var_data.shape[1])],
+                        "variables": {},
+                        "stats": {},
+                    },
+                )
+                frame["variables"][var_name] = var_data.tolist()
+                frame["stats"][var_name] = {
+                    "min": float(var_data.min()),
+                    "max": float(var_data.max()),
+                    "mean": float(var_data.mean()),
+                    "std": float(var_data.std()),
+                    "unit": var_info["unit"],
+                    "description": var_info["description"],
+                }
+
+            ds.close()
+
+        except Exception as e:
+            logger.warning(f"Failed to extract series for {var_name}: {e}")
+            continue
+
+    if not frames_by_step:
+        raise HTTPException(status_code=500, detail="Failed to extract any variables from GRIB file")
+
+    ordered_steps = sorted(frames_by_step.keys())
+    frames: List[Dict[str, Any]] = []
+    for step_idx in ordered_steps:
+        frame = frames_by_step[step_idx]
+        hour_val = float(frame["hour"])
+        rounded_hour = int(round(hour_val)) if abs(hour_val - round(hour_val)) < 1e-6 else round(hour_val, 3)
+        frames.append(
+            {
+                "step": step_idx,
+                "hour": rounded_hour,
+                "shape": frame["shape"],
+                "variables": frame["variables"],
+                "stats": frame["stats"],
+                "extracted_count": len(frame["variables"]),
+            }
+        )
+
+    region_info = {
+        "key": region_key,
+        "name": bounds["name"],
+        "bounds": {
+            "north": bounds["north"],
+            "south": bounds["south"],
+            "east": bounds["east"],
+            "west": bounds["west"],
+        },
+    }
+
+    return {
+        "region": region_key,
+        "region_name": bounds["name"],
+        "region_info": region_info,
+        "shape": frames[0]["shape"] if frames else [0, 0],
+        "frame_count": len(frames),
+        "step_stride": stride,
+        "frames": frames,
     }
 
 
@@ -952,6 +1119,109 @@ async def get_forecast_status(job_id: str):
         error=job["error"]
     )
 
+
+def _step_values_to_hours(step_values: Any) -> List[float]:
+    """Normalize GRIB step coordinate values to forecast hours."""
+    import numpy as np
+
+    arr = np.asarray(step_values)
+    if arr.size == 0:
+        return [0.0]
+
+    if np.issubdtype(arr.dtype, np.timedelta64):
+        seconds = arr.astype("timedelta64[s]").astype(np.float64)
+        hours = seconds / 3600.0
+    elif np.issubdtype(arr.dtype, np.datetime64):
+        base = arr[0].astype("datetime64[s]").astype(np.int64)
+        seconds = arr.astype("datetime64[s]").astype(np.int64) - base
+        hours = seconds.astype(np.float64) / 3600.0
+    else:
+        hours = arr.astype(np.float64)
+
+    return [float(v) for v in hours.tolist()]
+
+
+def _load_step_metadata(output_file: Path) -> Dict[str, Any]:
+    """Inspect the GRIB file and return step indices and hour coordinates."""
+    import xarray as xr
+
+    short_names = ["2t", "10u", "10v", "msl", "tp"]
+    for short_name in short_names:
+        ds = xr.open_dataset(
+            output_file,
+            engine="cfgrib",
+            backend_kwargs={"filter_by_keys": {"shortName": short_name}},
+        )
+        try:
+            if not ds.data_vars:
+                continue
+            data_var_name = next(iter(ds.data_vars))
+            data_var = ds[data_var_name]
+            if "step" in data_var.dims:
+                step_count = int(len(data_var.step))
+                step_hours = _step_values_to_hours(data_var.step.values)
+            else:
+                step_count = 1
+                step_hours = [0.0]
+            if step_count <= 0:
+                step_count = 1
+                step_hours = [0.0]
+            steps = list(range(step_count))
+            if len(step_hours) != step_count:
+                step_hours = [float(i) for i in steps]
+            return {
+                "steps": steps,
+                "step_hours": step_hours,
+                "step_count": step_count,
+            }
+        finally:
+            ds.close()
+
+    raise HTTPException(status_code=500, detail="Could not read forecast metadata from GRIB file")
+
+
+@app.get("/forecast/{job_id}/steps")
+async def get_forecast_steps(job_id: str):
+    """Return available step indices for a completed forecast."""
+    if job_id not in running_forecasts:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job = running_forecasts[job_id]
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
+
+    output_file = Path(job["output_file"])
+    if not output_file.exists():
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    try:
+        metadata = _load_step_metadata(output_file)
+        steps = metadata["steps"]
+        step_hours = metadata["step_hours"]
+        rounded_step_hours = [
+            int(round(hour)) if abs(hour - round(hour)) < 1e-6 else round(hour, 3)
+            for hour in step_hours
+        ]
+        return {
+            "job_id": job_id,
+            "steps": steps,
+            "step_hours": rounded_step_hours,
+            "step_count": metadata["step_count"],
+            "max_step": steps[-1] if steps else 0,
+            "max_hour": rounded_step_hours[-1] if rounded_step_hours else 0,
+        }
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="cfgrib/xarray not installed. Run: pip install xarray cfgrib eccodes",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Step inspection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/forecast/{job_id}/precipitation")
 async def get_precipitation(job_id: str, step: int = 0):
     """
@@ -1291,6 +1561,137 @@ async def run_pipeline(job_id: str, region: str, step: int = 0):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _resolve_completed_output_file(job_id: str) -> Path:
+    if job_id not in running_forecasts:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job = running_forecasts[job_id]
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
+
+    output_file = Path(job["output_file"])
+    if not output_file.exists():
+        raise HTTPException(status_code=404, detail="Output file not found")
+    return output_file
+
+
+def _extract_region_payload(
+    output_file: Path,
+    step: int,
+    region: Optional[str],
+    north: Optional[float],
+    south: Optional[float],
+    east: Optional[float],
+    west: Optional[float],
+    region_name: Optional[str],
+) -> Dict[str, Any]:
+    has_any_bounds = any(v is not None for v in (north, south, east, west))
+    if has_any_bounds:
+        if None in (north, south, east, west):
+            raise HTTPException(status_code=400, detail="north/south/east/west must all be provided together")
+        extraction = extract_regional_variables(
+            output_file,
+            step=step,
+            custom_bounds={
+                "north": north,
+                "south": south,
+                "east": east,
+                "west": west,
+            },
+            custom_region_name=region_name or region or "Custom Region",
+        )
+    else:
+        region_key = resolve_region_key(region or "")
+        if not region_key:
+            raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
+        extraction = extract_regional_variables(output_file, region=region_key, step=step)
+
+    return {
+        "region": extraction["region"],
+        "region_name": extraction["region_name"],
+        "region_info": extraction["region_info"],
+        "shape": extraction["shape"],
+        "variables": extraction["variables"],
+        "stats": extraction["stats"],
+        "extracted_count": len(extraction["variables"]),
+    }
+
+
+def _resolve_hour_pair(step_hours: List[float], target_hour: float) -> Dict[str, Any]:
+    """Resolve bracketing step indices and interpolation ratio for a target hour."""
+    if not step_hours:
+        return {"lower": 0, "upper": 0, "lower_hour": 0.0, "upper_hour": 0.0, "ratio": 0.0}
+
+    if target_hour <= step_hours[0]:
+        return {"lower": 0, "upper": 0, "lower_hour": step_hours[0], "upper_hour": step_hours[0], "ratio": 0.0}
+    if target_hour >= step_hours[-1]:
+        last = len(step_hours) - 1
+        return {"lower": last, "upper": last, "lower_hour": step_hours[last], "upper_hour": step_hours[last], "ratio": 0.0}
+
+    upper = 1
+    while upper < len(step_hours) and step_hours[upper] < target_hour:
+        upper += 1
+    lower = max(0, upper - 1)
+    lower_hour = float(step_hours[lower])
+    upper_hour = float(step_hours[upper])
+
+    if abs(target_hour - lower_hour) < 1e-6:
+        return {"lower": lower, "upper": lower, "lower_hour": lower_hour, "upper_hour": lower_hour, "ratio": 0.0}
+    if abs(target_hour - upper_hour) < 1e-6:
+        return {"lower": upper, "upper": upper, "lower_hour": upper_hour, "upper_hour": upper_hour, "ratio": 0.0}
+
+    if abs(upper_hour - lower_hour) < 1e-9:
+        ratio = 0.0
+    else:
+        ratio = (target_hour - lower_hour) / (upper_hour - lower_hour)
+    ratio = float(min(1.0, max(0.0, ratio)))
+    return {"lower": lower, "upper": upper, "lower_hour": lower_hour, "upper_hour": upper_hour, "ratio": ratio}
+
+
+def _interpolate_extractions(lower_payload: Dict[str, Any], upper_payload: Dict[str, Any], ratio: float) -> Dict[str, Any]:
+    """Linear interpolation between two extracted regional payloads."""
+    import numpy as np
+
+    lower_variables = lower_payload.get("variables", {})
+    upper_variables = upper_payload.get("variables", {})
+    shared_variables = sorted(set(lower_variables.keys()) & set(upper_variables.keys()))
+    if not shared_variables:
+        raise HTTPException(status_code=500, detail="No shared variables available for temporal interpolation")
+
+    interpolated_variables: Dict[str, Any] = {}
+    interpolated_stats: Dict[str, Any] = {}
+
+    for var_name in shared_variables:
+        arr0 = np.array(lower_variables[var_name], dtype=np.float32)
+        arr1 = np.array(upper_variables[var_name], dtype=np.float32)
+        if arr0.shape != arr1.shape:
+            raise HTTPException(status_code=500, detail=f"Shape mismatch for variable '{var_name}' during interpolation")
+
+        blended = arr0 + (arr1 - arr0) * ratio
+        interpolated_variables[var_name] = blended.tolist()
+
+        base_stats = lower_payload.get("stats", {}).get(var_name, {})
+        interpolated_stats[var_name] = {
+            "min": float(np.min(blended)),
+            "max": float(np.max(blended)),
+            "mean": float(np.mean(blended)),
+            "std": float(np.std(blended)),
+            "unit": base_stats.get("unit"),
+            "description": base_stats.get("description"),
+        }
+
+    shape = lower_payload.get("shape") or upper_payload.get("shape") or [0, 0]
+    return {
+        "region": lower_payload.get("region") or upper_payload.get("region"),
+        "region_name": lower_payload.get("region_name") or upper_payload.get("region_name"),
+        "region_info": lower_payload.get("region_info") or upper_payload.get("region_info"),
+        "shape": shape,
+        "variables": interpolated_variables,
+        "stats": interpolated_stats,
+        "extracted_count": len(interpolated_variables),
+    }
+
+
 @app.get("/forecast/{job_id}/regional")
 async def extract_region(
     job_id: str,
@@ -1305,40 +1706,20 @@ async def extract_region(
     """
     Extract raw regional slices for t2m/u10/v10/msl from a completed forecast.
     """
-    if job_id not in running_forecasts:
-        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-    job = running_forecasts[job_id]
-    if job["status"] != "completed":
-        raise HTTPException(status_code=400, detail=f"Job status: {job['status']}")
-
-    output_file = Path(job["output_file"])
-    if not output_file.exists():
-        raise HTTPException(status_code=404, detail="Output file not found")
+    output_file = _resolve_completed_output_file(job_id)
 
     try:
-        has_any_bounds = any(v is not None for v in (north, south, east, west))
-        if has_any_bounds:
-            if None in (north, south, east, west):
-                raise HTTPException(status_code=400, detail="north/south/east/west must all be provided together")
-            extraction = extract_regional_variables(
-                output_file,
-                step=step,
-                custom_bounds={
-                    "north": north,
-                    "south": south,
-                    "east": east,
-                    "west": west,
-                },
-                custom_region_name=region_name or region or "Custom Region",
-            )
-        else:
-            region_key = resolve_region_key(region or "")
-            if not region_key:
-                raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
-            extraction = extract_regional_variables(output_file, region=region_key, step=step)
-
-        response_payload = {
+        extraction = _extract_region_payload(
+            output_file=output_file,
+            step=step,
+            region=region,
+            north=north,
+            south=south,
+            east=east,
+            west=west,
+            region_name=region_name,
+        )
+        return {
             "job_id": job_id,
             "region": extraction["region"],
             "region_name": extraction["region_name"],
@@ -1347,9 +1728,8 @@ async def extract_region(
             "shape": extraction["shape"],
             "variables": extraction["variables"],
             "stats": extraction["stats"],
-            "extracted_count": len(extraction["variables"]),
+            "extracted_count": extraction["extracted_count"],
         }
-        return response_payload
     except ImportError:
         raise HTTPException(
             status_code=500,
@@ -1359,6 +1739,153 @@ async def extract_region(
         raise
     except Exception as e:
         logger.error(f"Region extraction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/{job_id}/regional/series")
+async def extract_region_series(
+    job_id: str,
+    region: Optional[str] = Query(None),
+    step_stride: int = Query(1, ge=1, le=24),
+    north: Optional[float] = Query(None),
+    south: Optional[float] = Query(None),
+    east: Optional[float] = Query(None),
+    west: Optional[float] = Query(None),
+    region_name: Optional[str] = Query(None),
+):
+    """
+    Extract regional slices across multiple forecast steps in one call.
+    Intended for animation workloads to avoid repeated GRIB decode.
+    """
+    output_file = _resolve_completed_output_file(job_id)
+
+    try:
+        has_any_bounds = any(v is not None for v in (north, south, east, west))
+        if has_any_bounds:
+            if None in (north, south, east, west):
+                raise HTTPException(status_code=400, detail="north/south/east/west must all be provided together")
+            extraction = extract_regional_variable_series(
+                output_file=output_file,
+                custom_bounds={
+                    "north": north,
+                    "south": south,
+                    "east": east,
+                    "west": west,
+                },
+                custom_region_name=region_name or region or "Custom Region",
+                step_stride=step_stride,
+            )
+        else:
+            extraction = extract_regional_variable_series(
+                output_file=output_file,
+                region=region,
+                step_stride=step_stride,
+            )
+
+        return {
+            "job_id": job_id,
+            "region": extraction["region"],
+            "region_name": extraction["region_name"],
+            "region_info": extraction["region_info"],
+            "shape": extraction["shape"],
+            "step_stride": extraction["step_stride"],
+            "frame_count": extraction["frame_count"],
+            "frames": extraction["frames"],
+        }
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="cfgrib/xarray not installed. Run: pip install xarray cfgrib eccodes",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Region series extraction error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/{job_id}/regional/hour")
+async def extract_region_at_hour(
+    job_id: str,
+    hour: float = Query(..., ge=0),
+    region: Optional[str] = Query(None),
+    north: Optional[float] = Query(None),
+    south: Optional[float] = Query(None),
+    east: Optional[float] = Query(None),
+    west: Optional[float] = Query(None),
+    region_name: Optional[str] = Query(None),
+):
+    """
+    Extract regional slices at an arbitrary forecast hour using linear temporal interpolation.
+    """
+    output_file = _resolve_completed_output_file(job_id)
+    target_hour = float(hour)
+
+    try:
+        metadata = _load_step_metadata(output_file)
+        step_hours = metadata["step_hours"]
+        pair = _resolve_hour_pair(step_hours, target_hour)
+        lower_step = int(pair["lower"])
+        upper_step = int(pair["upper"])
+        ratio = float(pair["ratio"])
+
+        lower_payload = _extract_region_payload(
+            output_file=output_file,
+            step=lower_step,
+            region=region,
+            north=north,
+            south=south,
+            east=east,
+            west=west,
+            region_name=region_name,
+        )
+
+        if upper_step == lower_step or ratio <= 1e-9:
+            result_payload = lower_payload
+            interpolated = False
+        else:
+            upper_payload = _extract_region_payload(
+                output_file=output_file,
+                step=upper_step,
+                region=region,
+                north=north,
+                south=south,
+                east=east,
+                west=west,
+                region_name=region_name,
+            )
+            result_payload = _interpolate_extractions(lower_payload, upper_payload, ratio)
+            interpolated = True
+
+        rounded_target_hour = int(round(target_hour)) if abs(target_hour - round(target_hour)) < 1e-6 else round(target_hour, 3)
+        lower_hour = pair["lower_hour"]
+        upper_hour = pair["upper_hour"]
+        return {
+            "job_id": job_id,
+            "region": result_payload["region"],
+            "region_name": result_payload["region_name"],
+            "region_info": result_payload["region_info"],
+            "hour": rounded_target_hour,
+            "interpolated": interpolated,
+            "source_steps": [lower_step, upper_step],
+            "source_hours": [
+                int(round(lower_hour)) if abs(lower_hour - round(lower_hour)) < 1e-6 else round(lower_hour, 3),
+                int(round(upper_hour)) if abs(upper_hour - round(upper_hour)) < 1e-6 else round(upper_hour, 3),
+            ],
+            "shape": result_payload["shape"],
+            "variables": result_payload["variables"],
+            "stats": result_payload["stats"],
+            "extracted_count": result_payload["extracted_count"],
+        }
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="cfgrib/xarray not installed. Run: pip install xarray cfgrib eccodes",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Hour extraction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -448,6 +448,14 @@ async def forecast_status(job_id: str):
         return resp.json()
 
 
+@app.get("/api/forecast/{job_id}/steps")
+async def forecast_steps(job_id: str):
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{FOURCASTNET_URL}/forecast/{job_id}/steps")
+        resp.raise_for_status()
+        return resp.json()
+
+
 @app.get("/api/global-map/{job_id}")
 async def global_map(job_id: str, variable: str = Query("t2m"), step: int = Query(0, ge=-1)):
     async with httpx.AsyncClient(timeout=180.0) as client:
@@ -476,13 +484,18 @@ async def extract(
     job_id: str,
     region: str | None = Query(None),
     step: int = Query(0),
+    hour: float | None = Query(None, ge=0),
     north: float | None = Query(None),
     south: float | None = Query(None),
     east: float | None = Query(None),
     west: float | None = Query(None),
     region_name: str | None = Query(None),
 ):
+    endpoint = f"{FOURCASTNET_URL}/forecast/{job_id}/regional"
     params: Dict[str, Any] = {"step": step}
+    if hour is not None:
+        endpoint = f"{FOURCASTNET_URL}/forecast/{job_id}/regional/hour"
+        params = {"hour": hour}
     has_any_bounds = any(v is not None for v in (north, south, east, west))
 
     if has_any_bounds:
@@ -505,7 +518,48 @@ async def extract(
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(
-            f"{FOURCASTNET_URL}/forecast/{job_id}/regional",
+            endpoint,
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+@app.get("/api/extract-series/{job_id}")
+async def extract_series(
+    job_id: str,
+    region: str | None = Query(None),
+    step_stride: int = Query(1, ge=1, le=24),
+    north: float | None = Query(None),
+    south: float | None = Query(None),
+    east: float | None = Query(None),
+    west: float | None = Query(None),
+    region_name: str | None = Query(None),
+):
+    params: Dict[str, Any] = {"step_stride": step_stride}
+    has_any_bounds = any(v is not None for v in (north, south, east, west))
+
+    if has_any_bounds:
+        if None in (north, south, east, west):
+            raise HTTPException(status_code=400, detail="north/south/east/west must all be provided together")
+        params.update(
+            {
+                "north": north,
+                "south": south,
+                "east": east,
+                "west": west,
+            }
+        )
+        if region_name:
+            params["region_name"] = region_name
+    else:
+        if not region:
+            raise HTTPException(status_code=400, detail="region is required when bounds are not provided")
+        params["region"] = region
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.get(
+            f"{FOURCASTNET_URL}/forecast/{job_id}/regional/series",
             params=params,
         )
         resp.raise_for_status()

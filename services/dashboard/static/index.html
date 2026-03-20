@@ -379,6 +379,39 @@
       overflow-wrap: anywhere;
       word-break: break-word;
     }
+    .downscale-animation-controls {
+      margin-bottom: 8px;
+    }
+    .toggle-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.86rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+    }
+    .toggle-inline input[type="checkbox"] {
+      width: 15px;
+      height: 15px;
+      padding: 0;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+    #downscaleStepSlider {
+      flex: 1 1 220px;
+      min-width: 150px;
+      padding: 0;
+      accent-color: var(--accent);
+    }
+    .frame-label {
+      font-size: 0.84rem;
+      color: var(--muted);
+      font-weight: 600;
+      min-width: 78px;
+      text-align: right;
+    }
 
     @media (max-width: 1050px) {
       .gateway-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -498,7 +531,25 @@
           <h3>Regional Downscale</h3>
           <span class="step-badge">Step 4</span>
         </div>
+        <div class="controls downscale-animation-controls">
+          <label class="toggle-inline" for="downscaleAutoPlay">
+            <input id="downscaleAutoPlay" type="checkbox" checked />
+            auto-play
+          </label>
+          <label for="downscaleSpeedMs">speed</label>
+          <select id="downscaleSpeedMs">
+            <option value="500">2x</option>
+            <option value="750">1.5x</option>
+            <option value="1000" selected>1x</option>
+            <option value="1500">0.7x</option>
+            <option value="2000">0.5x</option>
+          </select>
+          <button id="btnDownscalePlay" class="alt" disabled>Play</button>
+          <input id="downscaleStepSlider" type="range" min="0" max="0" value="0" disabled />
+          <span id="downscaleStepLabel" class="frame-label">Frame --/--</span>
+        </div>
         <div class="status" id="downscaleStatus">Waiting for regional extraction.</div>
+        <div class="status" id="downscaleAnimStatus">Animation idle.</div>
         <div class="map-wrap">
           <img id="downscaleMap" alt="downscale map" hidden />
           <div id="downscaleMapHint" class="hint">Downscale map will appear after downscaling.</div>
@@ -555,6 +606,14 @@
         regional: null,
         downscale: null,
       },
+      downscaleAnimation: {
+        frames: [],
+        playing: false,
+        timer: null,
+        currentIndex: 0,
+        building: false,
+        intervalMs: 1000,
+      },
     };
 
     const SERVICE_LABELS = {
@@ -569,6 +628,8 @@
     const DEFAULT_REGION_KEY = "CONUS";
     const DEFAULT_DOWNSCALE_METHOD = "bilinear";
     const DEFAULT_UPSCALE_FACTOR = 4;
+    const DOWNSCALE_ANIMATION_STEP_STRIDE = 1;
+    const DOWNSCALE_ANIMATION_HOUR_STRIDE = 1;
 
     const el = (id) => document.getElementById(id);
 
@@ -642,6 +703,20 @@
 
     function getSelectedGlobalVariable() {
       return el("globalVar").value || "t2m";
+    }
+
+    function getRequestedForecastHour() {
+      if (
+        state.advisoryContext &&
+        Number.isFinite(Number(state.advisoryContext.time)) &&
+        Number(state.advisoryContext.time) >= 0
+      ) {
+        return Math.round(Number(state.advisoryContext.time));
+      }
+      if (Number.isFinite(Number(state.forecastLeadTime)) && Number(state.forecastLeadTime) >= 0) {
+        return Math.round(Number(state.forecastLeadTime));
+      }
+      return null;
     }
 
     function ensureVariableAvailable(values, variable, scopeLabel) {
@@ -932,9 +1007,134 @@
       el("ctxActivity").textContent = values.activity;
     }
 
+    function isDownscaleAutoPlayEnabled() {
+      const node = el("downscaleAutoPlay");
+      return !!(node && node.checked);
+    }
+
+    function getDownscaleAnimationIntervalMs() {
+      const node = el("downscaleSpeedMs");
+      const value = Number(node && node.value ? node.value : 1000);
+      return Number.isFinite(value) && value > 0 ? value : 1000;
+    }
+
+    function restoreStaticDownscaleImage() {
+      const mapNode = el("downscaleMap");
+      const hintNode = el("downscaleMapHint");
+      if (state.mapUrls.downscale) {
+        mapNode.src = state.mapUrls.downscale;
+        mapNode.hidden = false;
+        hintNode.hidden = true;
+      }
+    }
+
+    function updateDownscaleAnimationControls() {
+      const slider = el("downscaleStepSlider");
+      const button = el("btnDownscalePlay");
+      const label = el("downscaleStepLabel");
+      const frameCount = state.downscaleAnimation.frames.length;
+      const maxIndex = Math.max(0, frameCount - 1);
+      const clampedIndex = Math.min(state.downscaleAnimation.currentIndex, maxIndex);
+      state.downscaleAnimation.currentIndex = clampedIndex;
+
+      slider.min = "0";
+      slider.max = String(maxIndex);
+      slider.value = String(clampedIndex);
+      slider.disabled = frameCount <= 1 || state.downscaleAnimation.building;
+
+      button.disabled = state.downscaleAnimation.building || frameCount < 2;
+      button.textContent = state.downscaleAnimation.playing ? "Pause" : "Play";
+
+      if (frameCount) {
+        const frame = state.downscaleAnimation.frames[clampedIndex];
+        const hourSuffix = frame && Number.isFinite(Number(frame.hour))
+          ? ` | h+${Math.round(Number(frame.hour))}`
+          : "";
+        label.textContent = `Frame ${clampedIndex + 1}/${frameCount}${hourSuffix}`;
+      } else {
+        label.textContent = "Frame --/--";
+      }
+    }
+
+    function stopDownscaleAnimationPlayback() {
+      if (state.downscaleAnimation.timer) {
+        clearInterval(state.downscaleAnimation.timer);
+        state.downscaleAnimation.timer = null;
+      }
+      state.downscaleAnimation.playing = false;
+      updateDownscaleAnimationControls();
+    }
+
+    function revokeDownscaleAnimationFrames() {
+      state.downscaleAnimation.frames.forEach((frame) => {
+        if (frame && frame.url) {
+          URL.revokeObjectURL(frame.url);
+        }
+      });
+      state.downscaleAnimation.frames = [];
+      state.downscaleAnimation.currentIndex = 0;
+    }
+
+    function resetDownscaleAnimation(statusMessage = "Animation idle.", restoreStatic = true) {
+      stopDownscaleAnimationPlayback();
+      revokeDownscaleAnimationFrames();
+      state.downscaleAnimation.building = false;
+      if (restoreStatic) {
+        restoreStaticDownscaleImage();
+      }
+      setStatus("downscaleAnimStatus", statusMessage);
+      updateDownscaleAnimationControls();
+    }
+
+    function showDownscaleAnimationFrame(index) {
+      const frames = state.downscaleAnimation.frames;
+      if (!frames.length) return;
+
+      const clamped = Math.max(0, Math.min(index, frames.length - 1));
+      const frame = frames[clamped];
+      if (!frame || !frame.url) return;
+
+      state.downscaleAnimation.currentIndex = clamped;
+      const mapNode = el("downscaleMap");
+      const hintNode = el("downscaleMapHint");
+      mapNode.src = frame.url;
+      mapNode.hidden = false;
+      hintNode.hidden = true;
+      updateDownscaleAnimationControls();
+    }
+
+    function startDownscaleAnimationPlayback() {
+      const frameCount = state.downscaleAnimation.frames.length;
+      if (frameCount < 2) {
+        updateDownscaleAnimationControls();
+        return;
+      }
+      stopDownscaleAnimationPlayback();
+      state.downscaleAnimation.intervalMs = getDownscaleAnimationIntervalMs();
+      state.downscaleAnimation.playing = true;
+      updateDownscaleAnimationControls();
+      state.downscaleAnimation.timer = setInterval(() => {
+        const nextIndex = (state.downscaleAnimation.currentIndex + 1) % frameCount;
+        showDownscaleAnimationFrame(nextIndex);
+      }, state.downscaleAnimation.intervalMs);
+    }
+
+    function toggleDownscaleAnimationPlayback() {
+      if (state.downscaleAnimation.playing) {
+        stopDownscaleAnimationPlayback();
+      } else {
+        startDownscaleAnimationPlayback();
+      }
+    }
+
     function setImage(slot, blob) {
       const mapNode = el(`${slot}Map`);
       const hintNode = el(`${slot}MapHint`);
+      if (slot === "downscale") {
+        stopDownscaleAnimationPlayback();
+        revokeDownscaleAnimationFrames();
+        setStatus("downscaleAnimStatus", "Animation idle.");
+      }
       if (state.mapUrls[slot]) {
         URL.revokeObjectURL(state.mapUrls[slot]);
       }
@@ -942,11 +1142,19 @@
       mapNode.src = state.mapUrls[slot];
       mapNode.hidden = false;
       hintNode.hidden = true;
+      if (slot === "downscale") {
+        updateDownscaleAnimationControls();
+      }
     }
 
     function clearImage(slot, hintText) {
       const mapNode = el(`${slot}Map`);
       const hintNode = el(`${slot}MapHint`);
+      if (slot === "downscale") {
+        stopDownscaleAnimationPlayback();
+        revokeDownscaleAnimationFrames();
+        setStatus("downscaleAnimStatus", "Animation idle.");
+      }
       if (state.mapUrls[slot]) {
         URL.revokeObjectURL(state.mapUrls[slot]);
         state.mapUrls[slot] = null;
@@ -955,6 +1163,9 @@
       mapNode.hidden = true;
       hintNode.hidden = false;
       hintNode.textContent = hintText;
+      if (slot === "downscale") {
+        updateDownscaleAnimationControls();
+      }
     }
 
     function stopForecastPolling() {
@@ -972,6 +1183,15 @@
     function updateControls() {
       const forecastDone = state.forecastStatus === "completed";
       el("btnGlobalMap").disabled = !forecastDone;
+      const speedNode = el("downscaleSpeedMs");
+      if (speedNode) {
+        speedNode.disabled = state.downscaleAnimation.building;
+      }
+      const autoPlayNode = el("downscaleAutoPlay");
+      if (autoPlayNode) {
+        autoPlayNode.disabled = state.downscaleAnimation.building;
+      }
+      updateDownscaleAnimationControls();
     }
 
     async function loadRegions() {
@@ -1022,64 +1242,187 @@
       return variable;
     }
 
-    async function runRegionalExtract() {
-      if (!state.jobId) return false;
+    function buildExtractRequest({ step = -1, hour = null } = {}) {
       const region = pickRegionKey();
-      const step = -1;
       const advisoryBounds = getAdvisoryBounds();
-      state.busy.extract = true;
-      state.errors.extract = null;
-      state.extractContext = advisoryBounds ? { ...advisoryBounds, step, source: "llm-bounds" } : { region, step };
-      updateControls();
-      try {
-        let extractPath;
-        if (advisoryBounds) {
-          const locationLabel =
-            state.advisoryContext &&
-            typeof state.advisoryContext.location === "string" &&
-            state.advisoryContext.location.trim()
-              ? state.advisoryContext.location.trim()
-              : "Custom Region";
-          extractPath =
-            `/api/extract/${state.jobId}?step=${step}` +
-            `&north=${encodeURIComponent(advisoryBounds.north)}` +
-            `&south=${encodeURIComponent(advisoryBounds.south)}` +
-            `&east=${encodeURIComponent(advisoryBounds.east)}` +
-            `&west=${encodeURIComponent(advisoryBounds.west)}` +
-            `&region_name=${encodeURIComponent(locationLabel)}`;
-        } else {
-          extractPath = `/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&step=${step}`;
-        }
+      const hasHour = Number.isFinite(Number(hour)) && Number(hour) >= 0;
+      const normalizedHour = hasHour ? Math.round(Number(hour)) : null;
+      const timeParam = hasHour
+        ? `hour=${encodeURIComponent(normalizedHour)}`
+        : `step=${encodeURIComponent(step)}`;
 
-        const res = await api(extractPath);
-        state.extracted = await res.json();
-        state.downscaled = null;
-        state.downscaleContext = null;
-        state.advisory = null;
-        state.errors.downscale = null;
-        state.errors.llm = null;
-        clearImage("downscale", "Downscale map will appear after downscaling.");
-        setStatus("downscaleStatus", "Ready for downscale.");
-        setStatus("llmStatus", "Waiting for downscale output.");
-        setAdvisoryOutput("No advisory yet.");
-
-        const regionLabel = state.extracted.region_name || state.extracted.region || region;
-        setStatus("regionalStatus", `Extracted ${regionLabel}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
-
-        await renderRegionalMap();
-        return true;
-      } catch (e) {
-        state.errors.extract = "extract";
-        setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
-        return false;
-      } finally {
-        state.busy.extract = false;
-        updateControls();
+      if (advisoryBounds) {
+        const locationLabel =
+          state.advisoryContext &&
+          typeof state.advisoryContext.location === "string" &&
+          state.advisoryContext.location.trim()
+            ? state.advisoryContext.location.trim()
+            : "Custom Region";
+        const extractPath =
+          `/api/extract/${state.jobId}?${timeParam}` +
+          `&north=${encodeURIComponent(advisoryBounds.north)}` +
+          `&south=${encodeURIComponent(advisoryBounds.south)}` +
+          `&east=${encodeURIComponent(advisoryBounds.east)}` +
+          `&west=${encodeURIComponent(advisoryBounds.west)}` +
+          `&region_name=${encodeURIComponent(locationLabel)}`;
+        return { region, advisoryBounds, extractPath, hour: normalizedHour, step };
       }
+
+      return {
+        region,
+        advisoryBounds: null,
+        extractPath: `/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&${timeParam}`,
+        hour: normalizedHour,
+        step,
+      };
     }
 
-    async function runDownscale() {
-      if (!state.extracted) return false;
+    function buildExtractSeriesRequest(stepStride = DOWNSCALE_ANIMATION_STEP_STRIDE) {
+      const region = pickRegionKey();
+      const advisoryBounds = getAdvisoryBounds();
+      const safeStride = Math.max(1, Math.round(Number(stepStride) || 1));
+
+      if (advisoryBounds) {
+        const locationLabel =
+          state.advisoryContext &&
+          typeof state.advisoryContext.location === "string" &&
+          state.advisoryContext.location.trim()
+            ? state.advisoryContext.location.trim()
+            : "Custom Region";
+        const extractPath =
+          `/api/extract-series/${state.jobId}?step_stride=${encodeURIComponent(safeStride)}` +
+          `&north=${encodeURIComponent(advisoryBounds.north)}` +
+          `&south=${encodeURIComponent(advisoryBounds.south)}` +
+          `&east=${encodeURIComponent(advisoryBounds.east)}` +
+          `&west=${encodeURIComponent(advisoryBounds.west)}` +
+          `&region_name=${encodeURIComponent(locationLabel)}`;
+        return { region, advisoryBounds, extractPath, stepStride: safeStride };
+      }
+
+      return {
+        region,
+        advisoryBounds: null,
+        extractPath: `/api/extract-series/${state.jobId}?region=${encodeURIComponent(region)}&step_stride=${encodeURIComponent(safeStride)}`,
+        stepStride: safeStride,
+      };
+    }
+
+    function normalizeSeriesFrames(frames) {
+      const normalized = [];
+      (Array.isArray(frames) ? frames : []).forEach((frame) => {
+        const hour = Number(frame && frame.hour);
+        if (!Number.isFinite(hour)) return;
+        normalized.push({
+          step: Number.isFinite(Number(frame && frame.step)) ? Math.round(Number(frame.step)) : null,
+          hour,
+          shape: Array.isArray(frame && frame.shape) ? frame.shape : null,
+          variables: (frame && typeof frame.variables === "object" && frame.variables) ? frame.variables : {},
+          stats: (frame && typeof frame.stats === "object" && frame.stats) ? frame.stats : {},
+        });
+      });
+      normalized.sort((a, b) => a.hour - b.hour);
+      return normalized;
+    }
+
+    function buildHourlyInterpolationPlans(sourceFrames, hourStride = DOWNSCALE_ANIMATION_HOUR_STRIDE) {
+      const frames = normalizeSeriesFrames(sourceFrames);
+      if (!frames.length) return { frames, plans: [] };
+
+      const stride = Math.max(1, Math.round(Number(hourStride) || 1));
+      const minHour = Number(frames[0].hour);
+      const maxHour = Number(frames[frames.length - 1].hour);
+      const startHour = Math.ceil(minHour);
+      const endHour = Math.floor(maxHour);
+      const targetHours = [];
+
+      if (startHour <= endHour) {
+        for (let hour = startHour; hour <= endHour; hour += stride) {
+          targetHours.push(hour);
+        }
+        if (targetHours.length && targetHours[targetHours.length - 1] !== endHour) {
+          targetHours.push(endHour);
+        }
+      } else {
+        targetHours.push(Math.round(minHour));
+      }
+
+      const plans = [];
+      let lowerIdx = 0;
+      for (const targetHour of targetHours) {
+        while (lowerIdx + 1 < frames.length && frames[lowerIdx + 1].hour <= targetHour) {
+          lowerIdx += 1;
+        }
+
+        let upperIdx = Math.min(lowerIdx + 1, frames.length - 1);
+        if (targetHour <= frames[0].hour) {
+          lowerIdx = 0;
+          upperIdx = 0;
+        } else if (targetHour >= frames[frames.length - 1].hour) {
+          lowerIdx = frames.length - 1;
+          upperIdx = frames.length - 1;
+        }
+
+        const lowerHour = Number(frames[lowerIdx].hour);
+        const upperHour = Number(frames[upperIdx].hour);
+        let ratio = 0;
+        if (upperIdx !== lowerIdx && Math.abs(upperHour - lowerHour) > 1e-9) {
+          ratio = (targetHour - lowerHour) / (upperHour - lowerHour);
+          ratio = Math.max(0, Math.min(1, ratio));
+        }
+
+        plans.push({
+          hour: targetHour,
+          lowerIndex: lowerIdx,
+          upperIndex: upperIdx,
+          ratio,
+        });
+      }
+
+      return { frames, plans };
+    }
+
+    function inferVariableShape(variables) {
+      const firstKey = Object.keys(variables || {})[0];
+      if (!firstKey) return [0, 0];
+      const grid = variables[firstKey];
+      if (!Array.isArray(grid) || !grid.length || !Array.isArray(grid[0])) return [0, 0];
+      return [grid.length, grid[0].length];
+    }
+
+    function interpolateVariableGrids(lowerVariables, upperVariables, ratio) {
+      const lower = (lowerVariables && typeof lowerVariables === "object") ? lowerVariables : {};
+      const upper = (upperVariables && typeof upperVariables === "object") ? upperVariables : {};
+      const blended = {};
+
+      Object.keys(lower).forEach((varName) => {
+        if (!Object.prototype.hasOwnProperty.call(upper, varName)) return;
+        const grid0 = lower[varName];
+        const grid1 = upper[varName];
+        if (!Array.isArray(grid0) || !Array.isArray(grid1)) return;
+
+        const rowCount = Math.min(grid0.length, grid1.length);
+        const mergedGrid = new Array(rowCount);
+        for (let r = 0; r < rowCount; r += 1) {
+          const row0 = Array.isArray(grid0[r]) ? grid0[r] : [];
+          const row1 = Array.isArray(grid1[r]) ? grid1[r] : [];
+          const colCount = Math.min(row0.length, row1.length);
+          const mergedRow = new Array(colCount);
+          for (let c = 0; c < colCount; c += 1) {
+            const v0 = Number(row0[c]);
+            const v1 = Number(row1[c]);
+            const n0 = Number.isFinite(v0) ? v0 : 0;
+            const n1 = Number.isFinite(v1) ? v1 : n0;
+            mergedRow[c] = n0 + (n1 - n0) * ratio;
+          }
+          mergedGrid[r] = mergedRow;
+        }
+        blended[varName] = mergedGrid;
+      });
+
+      return blended;
+    }
+
+    function buildDownscalePayloadFromExtracted(extracted) {
       const method = DEFAULT_DOWNSCALE_METHOD;
       const upscale = DEFAULT_UPSCALE_FACTOR;
       const advisoryBounds = getAdvisoryBounds();
@@ -1089,8 +1432,8 @@
         state.advisoryContext.location.trim()
           ? state.advisoryContext.location.trim()
           : null;
-      const extractedRegionInfo = (state.extracted && typeof state.extracted.region_info === "object" && state.extracted.region_info)
-        ? { ...state.extracted.region_info }
+      const extractedRegionInfo = (extracted && typeof extracted.region_info === "object" && extracted.region_info)
+        ? { ...extracted.region_info }
         : {};
       const extractedBounds =
         extractedRegionInfo &&
@@ -1108,27 +1451,182 @@
             }
           : null
       );
-      const regionLabel = advisoryLocation || state.extracted.region_name || "Custom Region";
+      const regionLabel = advisoryLocation || extracted.region_name || "Custom Region";
       const downscaleRegionInfo = {
         ...extractedRegionInfo,
         name: regionLabel,
         bounds: effectiveBounds || extractedBounds,
       };
 
-      state.busy.downscale = true;
-      state.errors.downscale = null;
-      state.downscaleContext = { method, upscale, bounds: effectiveBounds };
-      updateControls();
-      try {
-        const downscalePayload = {
-          ...state.extracted,
-          region: effectiveBounds ? "CUSTOM" : state.extracted.region,
+      return {
+        method,
+        upscale,
+        regionLabel,
+        effectiveBounds,
+        payload: {
+          ...extracted,
+          region: effectiveBounds ? "CUSTOM" : extracted.region,
           region_name: regionLabel,
           region_info: downscaleRegionInfo,
           upscale_factor: upscale,
           method,
-        };
+        },
+      };
+    }
 
+    async function buildDownscaleAnimationFrames({ autoplay = true } = {}) {
+      if (!state.jobId || state.forecastStatus !== "completed") return false;
+      if (!state.downscaled) return false;
+      if (state.downscaleAnimation.building) return false;
+
+      const variable = getSelectedGlobalVariable();
+      state.downscaleAnimation.building = true;
+      try {
+        const { extractPath } = buildExtractSeriesRequest(DOWNSCALE_ANIMATION_STEP_STRIDE);
+        const seriesRes = await api(extractPath);
+        const series = await seriesRes.json();
+        const { frames: sourceFrames, plans: hourlyPlans } = buildHourlyInterpolationPlans(
+          series.frames,
+          DOWNSCALE_ANIMATION_HOUR_STRIDE
+        );
+        if (!sourceFrames.length || !hourlyPlans.length) return false;
+
+        stopDownscaleAnimationPlayback();
+        revokeDownscaleAnimationFrames();
+        updateDownscaleAnimationControls();
+        setStatus(
+          "downscaleAnimStatus",
+          `Preparing ${hourlyPlans.length} downscale frames (1-hour interpolation from ${sourceFrames.length} GRIB steps)...`,
+          "warn"
+        );
+
+        for (let idx = 0; idx < hourlyPlans.length; idx += 1) {
+          const plan = hourlyPlans[idx];
+          const lowerFrame = sourceFrames[plan.lowerIndex] || null;
+          const upperFrame = sourceFrames[plan.upperIndex] || null;
+          if (!lowerFrame || !upperFrame) {
+            throw new Error("Invalid interpolation frame plan");
+          }
+          const interpolated = plan.upperIndex !== plan.lowerIndex && plan.ratio > 1e-9 && plan.ratio < (1 - 1e-9);
+          const label = `h+${Math.round(plan.hour)}${interpolated ? " (interp)" : ""}`;
+          setStatus("downscaleAnimStatus", `Building frame ${idx + 1}/${hourlyPlans.length} (${label})...`, "warn");
+
+          const frameVariables = interpolated
+            ? interpolateVariableGrids(lowerFrame.variables, upperFrame.variables, plan.ratio)
+            : lowerFrame.variables;
+          ensureVariableAvailable(frameVariables, variable, "Downscale animation");
+          const frameShape = inferVariableShape(frameVariables);
+          const frameStep = lowerFrame.step;
+
+          const extractedStep = {
+            job_id: state.jobId,
+            region: series.region,
+            region_name: series.region_name,
+            region_info: series.region_info,
+            step: frameStep,
+            hour: Math.round(plan.hour),
+            shape: frameShape[0] > 0 ? frameShape : (lowerFrame.shape || series.shape),
+            variables: frameVariables,
+            stats: interpolated ? {} : (lowerFrame.stats || {}),
+            extracted_count: Object.keys(frameVariables || {}).length,
+          };
+
+          const { payload: downscalePayload } = buildDownscalePayloadFromExtracted(extractedStep);
+          const downscaleRes = await api("/api/downscale", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(downscalePayload),
+          });
+          const downscaledStep = await downscaleRes.json();
+
+          ensureVariableAvailable(downscaledStep && downscaledStep.predictions, variable, "Downscale animation");
+          const mapRes = await api("/api/map/downscale", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...downscaledStep, variable }),
+          });
+          const blob = await mapRes.blob();
+          state.downscaleAnimation.frames.push({ step: frameStep, hour: extractedStep.hour, url: URL.createObjectURL(blob) });
+        }
+
+        if (!state.downscaleAnimation.frames.length) {
+          setStatus("downscaleAnimStatus", "Animation unavailable (no frames).", "warn");
+          return false;
+        }
+
+        showDownscaleAnimationFrame(0);
+        setStatus("downscaleAnimStatus", `Animation ready: ${hourlyPlans.length} frame(s), 1-hour interval.`, "ok");
+        if (autoplay && hourlyPlans.length > 1) {
+          startDownscaleAnimationPlayback();
+        }
+        return true;
+      } catch (e) {
+        setStatus("downscaleAnimStatus", `Animation error: ${e.message}`, "err");
+        revokeDownscaleAnimationFrames();
+        restoreStaticDownscaleImage();
+        updateDownscaleAnimationControls();
+        return false;
+      } finally {
+        state.downscaleAnimation.building = false;
+        updateDownscaleAnimationControls();
+      }
+    }
+
+    async function runRegionalExtract() {
+      if (!state.jobId) return false;
+      const targetHour = getRequestedForecastHour();
+      const { region, advisoryBounds, extractPath } = buildExtractRequest({ step: -1, hour: targetHour });
+      state.busy.extract = true;
+      state.errors.extract = null;
+      state.extractContext = advisoryBounds
+        ? { ...advisoryBounds, hour: targetHour, step: -1, source: "llm-bounds" }
+        : { region, hour: targetHour, step: -1 };
+      updateControls();
+      try {
+        const res = await api(extractPath);
+        state.extracted = await res.json();
+        state.downscaled = null;
+        state.downscaleContext = null;
+        state.advisory = null;
+        state.errors.downscale = null;
+        state.errors.llm = null;
+        clearImage("downscale", "Downscale map will appear after downscaling.");
+        resetDownscaleAnimation();
+        setStatus("downscaleStatus", "Ready for downscale.");
+        setStatus("llmStatus", "Waiting for downscale output.");
+        setAdvisoryOutput("No advisory yet.");
+
+        const regionLabel = state.extracted.region_name || state.extracted.region || region;
+        const hourLabel = Number.isFinite(Number(state.extracted.hour))
+          ? ` @ h+${Math.round(Number(state.extracted.hour))}`
+          : (Number.isFinite(Number(targetHour)) ? ` @ h+${Math.round(Number(targetHour))}` : "");
+        setStatus("regionalStatus", `Extracted ${regionLabel}${hourLabel}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
+
+        await renderRegionalMap();
+        return true;
+      } catch (e) {
+        state.errors.extract = "extract";
+        setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
+        return false;
+      } finally {
+        state.busy.extract = false;
+        updateControls();
+      }
+    }
+
+    async function runDownscale() {
+      if (!state.extracted) return false;
+      const { method, upscale, regionLabel, effectiveBounds, payload: downscalePayload } = buildDownscalePayloadFromExtracted(state.extracted);
+      const autoPlay = isDownscaleAutoPlayEnabled();
+      const targetHour = Number.isFinite(Number(state.extracted.hour))
+        ? Math.round(Number(state.extracted.hour))
+        : getRequestedForecastHour();
+
+      state.busy.downscale = true;
+      state.errors.downscale = null;
+      state.downscaleContext = { method, upscale, bounds: effectiveBounds, hour: targetHour };
+      updateControls();
+      try {
         const res = await api("/api/downscale", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1142,17 +1640,26 @@
 
         setStatus(
           "downscaleStatus",
-          `Downscaled ${method} x${upscale} (${regionLabel}) | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
+          `Downscaled ${method} x${upscale} (${regionLabel})${Number.isFinite(Number(targetHour)) ? ` @ h+${Math.round(Number(targetHour))}` : ""} | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
           "ok"
         );
 
         await renderDownscaleMap();
-        await waitBeforeNextService("llmStatus", "Downscale completed.");
-        await runAdvisoryGeneration();
+        if (autoPlay) {
+          buildDownscaleAnimationFrames({ autoplay: true }).catch((animationErr) => {
+            setStatus("downscaleAnimStatus", `Animation error: ${animationErr.message}`, "err");
+          });
+          await runAdvisoryGeneration();
+        } else {
+          setStatus("downscaleAnimStatus", "Auto-play is off. Press Play to build animation.", "warn");
+          await waitBeforeNextService("llmStatus", "Downscale completed.");
+          await runAdvisoryGeneration();
+        }
         return true;
       } catch (e) {
         state.errors.downscale = "downscale";
         setStatus("downscaleStatus", `Downscale error: ${e.message}`, "err");
+        setStatus("downscaleAnimStatus", "Animation idle.");
         return false;
       } finally {
         state.busy.downscale = false;
@@ -1173,10 +1680,16 @@
           Number(state.advisoryContext.time) >= 0
             ? Math.round(Number(state.advisoryContext.time))
             : null;
+        const extractedRegionHour =
+          state.extracted &&
+          Number.isFinite(Number(state.extracted.hour)) &&
+          Number(state.extracted.hour) >= 0
+            ? Math.round(Number(state.extracted.hour))
+            : null;
         const forecastHour =
           extractedTimeHours !== null
             ? extractedTimeHours
-            : Number(state.forecastLeadTime || 24);
+            : (extractedRegionHour !== null ? extractedRegionHour : Number(state.forecastLeadTime || 24));
         const customerLocation =
           state.advisoryContext &&
           typeof state.advisoryContext.location === "string" &&
@@ -1307,6 +1820,71 @@
       state.forecastPollTimer = setInterval(refreshForecastStatus, 5000);
     }
 
+    function hasPipelineStateToReset() {
+      return !!(
+        state.jobId ||
+        state.forecastStatus ||
+        state.extracted ||
+        state.downscaled ||
+        state.advisory ||
+        state.advisoryContext ||
+        state.forecastProgress ||
+        state.mapUrls.global ||
+        state.mapUrls.regional ||
+        state.mapUrls.downscale ||
+        (state.downscaleAnimation && state.downscaleAnimation.frames && state.downscaleAnimation.frames.length) ||
+        state.busy.forecast ||
+        state.busy.extract ||
+        state.busy.downscale ||
+        state.busy.llm
+      );
+    }
+
+    function resetDashboardForNewInput(reason = "Ready for new customer input.") {
+      if (!hasPipelineStateToReset()) {
+        updateControls();
+        return;
+      }
+
+      stopForecastPolling();
+      stopDownscaleAnimationPlayback();
+      revokeDownscaleAnimationFrames();
+
+      state.jobId = null;
+      state.forecastStatus = null;
+      state.forecastProgress = null;
+      state.forecastLeadTime = null;
+      state.extracted = null;
+      state.extractContext = null;
+      state.downscaled = null;
+      state.downscaleContext = null;
+      state.advisory = null;
+      state.advisoryContext = null;
+      state.errors.forecast = null;
+      state.errors.extract = null;
+      state.errors.downscale = null;
+      state.errors.llm = null;
+      state.busy.forecast = false;
+      state.busy.extract = false;
+      state.busy.downscale = false;
+      state.busy.llm = false;
+      state.autoPipeline.running = false;
+      state.autoPipeline.completedJobId = null;
+
+      clearImage("global", "Global map will appear when forecast completes.");
+      clearImage("regional", "Regional map will appear after extraction.");
+      clearImage("downscale", "Downscale map will appear after downscaling.");
+      resetDownscaleAnimation("Animation idle.");
+      setAdvisoryContext(null);
+      setStatus("forecastStatus", reason);
+      setStatus("regionalStatus", "Waiting for global forecast completion.");
+      setStatus("downscaleStatus", "Waiting for regional extraction.");
+      setStatus("downscaleAnimStatus", "Animation idle.");
+      setStatus("llmStatus", "Waiting for downscale output.");
+      setAdvisoryOutput("No advisory yet.");
+      updateControls();
+    }
+
     async function startGlobalForecast(rawLeadTime = null) {
       const requestedLeadTime =
         rawLeadTime !== null && rawLeadTime !== undefined
@@ -1341,6 +1919,7 @@
         clearImage("downscale", "Downscale map will appear after downscaling.");
         setStatus("regionalStatus", "Waiting for global forecast completion.");
         setStatus("downscaleStatus", "Waiting for regional extraction.");
+        setStatus("downscaleAnimStatus", "Animation idle.");
         setStatus("llmStatus", "Waiting for downscale output.");
         setAdvisoryOutput("No advisory yet.");
 
@@ -1383,6 +1962,49 @@
         setStatus("forecastStatus", `Global map error: ${e.message}`, "err");
       }
     };
+
+    el("btnDownscalePlay").onclick = async () => {
+      if (state.downscaleAnimation.building) return;
+      if (!state.downscaleAnimation.frames.length) {
+        if (!state.downscaled || !state.jobId || state.forecastStatus !== "completed") {
+          setStatus("downscaleAnimStatus", "No downscale output available for animation yet.", "warn");
+          return;
+        }
+        await buildDownscaleAnimationFrames({ autoplay: true });
+        return;
+      }
+      toggleDownscaleAnimationPlayback();
+    };
+
+    el("downscaleStepSlider").addEventListener("input", (event) => {
+      if (state.downscaleAnimation.building) return;
+      const idx = Number(event.target.value);
+      if (!Number.isFinite(idx)) return;
+      stopDownscaleAnimationPlayback();
+      showDownscaleAnimationFrame(Math.round(idx));
+    });
+
+    el("downscaleSpeedMs").addEventListener("change", () => {
+      state.downscaleAnimation.intervalMs = getDownscaleAnimationIntervalMs();
+      if (state.downscaleAnimation.playing) {
+        startDownscaleAnimationPlayback();
+      }
+      updateDownscaleAnimationControls();
+    });
+
+    el("downscaleAutoPlay").addEventListener("change", () => {
+      if (!isDownscaleAutoPlayEnabled()) {
+        stopDownscaleAnimationPlayback();
+      }
+      updateDownscaleAnimationControls();
+    });
+
+    el("globalVar").addEventListener("change", () => {
+      if (state.downscaleAnimation.frames.length) {
+        resetDownscaleAnimation("Animation reset for new variable.");
+      }
+      updateControls();
+    });
 
     async function runExtractContextFromText() {
       const text = el("advisoryInput").value.trim();
@@ -1442,10 +2064,19 @@
       }
     }
 
-    el("advisoryInput").addEventListener("input", updateControls);
+    el("advisoryInput").addEventListener("focus", () => {
+      el("advisoryInput").value = "";
+      resetDashboardForNewInput("Ready for new customer input.");
+    });
+    el("advisoryInput").addEventListener("input", () => {
+      resetDashboardForNewInput("Ready for new customer input.");
+    });
     el("advisoryInput").addEventListener("keydown", async (event) => {
       if (event.key !== "Enter" || event.shiftKey) return;
       event.preventDefault();
+      if (event.currentTarget && typeof event.currentTarget.blur === "function") {
+        event.currentTarget.blur();
+      }
       await runExtractContextFromText();
     });
     setAdvisoryContext(null);
@@ -1464,6 +2095,8 @@
     window.addEventListener("beforeunload", () => {
       stopForecastPolling();
       stopGatewayPolling();
+      stopDownscaleAnimationPlayback();
+      revokeDownscaleAnimationFrames();
       Object.values(state.serviceLinks).forEach((link) => clearLinkIdleTimer(link));
       Object.keys(state.mapUrls).forEach((k) => {
         if (state.mapUrls[k]) URL.revokeObjectURL(state.mapUrls[k]);
