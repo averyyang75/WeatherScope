@@ -149,6 +149,17 @@ spec:
       timeouts:
         request: 300s
         backendRequest: 295s
+    # Structured context extraction
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /extract-context
+      backendRefs:
+        - name: llm-service
+          port: 8002
+      timeouts:
+        request: 300s
+        backendRequest: 295s
     # LLM runtime config
     - matches:
         - path:

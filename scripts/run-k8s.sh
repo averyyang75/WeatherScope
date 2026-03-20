@@ -445,8 +445,10 @@ print_status() {
     echo "  - Map (Regional): http://localhost:${endpoint_port}/map/regional"
     echo "  - Map (Downscale): http://localhost:${endpoint_port}/map/downscale"
     echo "  - Interpret:  http://localhost:${endpoint_port}/interpret"
+    echo "  - Extract Context: http://localhost:${endpoint_port}/extract-context"
     echo "  - Dashboard:  http://localhost:${endpoint_port}/dashboard"
     echo "  - Dashboard API: http://localhost:${endpoint_port}/api/regions"
+    echo "  - Advisory Extract API: http://localhost:${endpoint_port}/api/advisory/extract"
     echo "  - Map Health: http://localhost:${endpoint_port}/health/map"
     echo "  - Dashboard Health: http://localhost:${endpoint_port}/health/dashboard"
 

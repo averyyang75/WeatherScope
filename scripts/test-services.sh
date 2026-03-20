@@ -21,7 +21,7 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --help, -h      Show this help"
-    echo "  --gateway, -g   Test via gateway (http://localhost:8080)"
+    echo "  --gateway, -g   Test via gateway (default: http://localhost:8088)"
     echo "  --local, -l     Test local services (default)"
     echo ""
     echo "Arguments (optional):"
@@ -31,7 +31,7 @@ show_help() {
     echo ""
     echo "Examples:"
     echo "  $0                           # Test local services"
-    echo "  $0 --gateway                 # Test via K8s gateway"
+    echo "  $0 --gateway                 # Test via K8s gateway (port-forward default: 8088)"
     echo "  $0 http://custom:8000        # Custom inference URL"
 }
 
@@ -42,7 +42,7 @@ case "${1:-}" in
         exit 0
         ;;
     --gateway|-g)
-        GATEWAY_URL="http://localhost:8080"
+        GATEWAY_URL="${GATEWAY_URL:-http://localhost:8088}"
         INFERENCE_URL="$GATEWAY_URL"
         LLM_URL="$GATEWAY_URL"
         FOURCASTNET_URL="$GATEWAY_URL"

@@ -159,7 +159,9 @@ run_service() {
     echo -e "${YELLOW}Gateway integration:${NC}"
     echo "  kubectl apply -f k8s/fourcastnet-service.yaml"
     echo "  kubectl apply -f k8s/gateway.yaml"
-    echo "  Then access via: http://localhost:8080/forecast"
+    echo "  Then access via:"
+    echo "    - http://localhost:8088/forecast  (default run-k8s port-forward)"
+    echo "    - http://localhost:8080/forecast  (k3d load balancer)"
     echo ""
 
     cd "$PROJECT_ROOT/services/fourcastnet"
