@@ -8,6 +8,8 @@ import logging
 import subprocess
 import time
 import math
+import json
+import re
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List, Any
 from datetime import datetime
@@ -30,6 +32,9 @@ VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
 VLLM_API_PREFIX = os.getenv("VLLM_API_PREFIX", "/v1")
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")
 INTERPRET_MAX_TOKENS = int(os.getenv("INTERPRET_MAX_TOKENS", "192"))
+GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", "").strip()
+NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "WeatherScope/1.0").strip()
+NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "").strip()
 
 # ============================================================================
 # LLM Abstraction Layer
@@ -490,6 +495,8 @@ def build_inference_prompt(
     downscale_payload: Dict,
     severity: str,
     max_precipitation: Optional[float] = None,
+    customer_text: Optional[str] = None,
+    activity: Optional[str] = None,
 ) -> str:
     """Build a prompt directly from inference-service /downscale output."""
     t2m = _extract_var_stats(downscale_payload, "t2m")
@@ -523,6 +530,29 @@ def build_inference_prompt(
         available_vars.update(downscale_payload.get("predictions", {}).keys())
     available_vars_text = ", ".join(sorted(available_vars)) if available_vars else "unknown"
 
+    customer_text_norm = _normalize_optional_text(customer_text)
+    activity_norm = _normalize_optional_text(activity)
+    customer_context_lines: List[str] = []
+    if customer_text_norm:
+        customer_context_lines.append(
+            f"- Original customer request: {json.dumps(customer_text_norm, ensure_ascii=True)}"
+        )
+    if activity_norm:
+        customer_context_lines.append(f"- Planned activity: {activity_norm}")
+
+    customer_context_block = ""
+    if customer_context_lines:
+        customer_context_block = "CUSTOMER CONTEXT:\n" + "\n".join(customer_context_lines) + "\n\n"
+
+    activity_guidance = ""
+    if customer_context_lines:
+        activity_guidance = (
+            "Activity impact requirement:\n"
+            "- Explain how the forecast affects the user's planned activity.\n"
+            "- Include concrete precautions or plan adjustments for that activity.\n\n"
+            "- If activity is not explicit, infer it from the original customer request.\n\n"
+        )
+
     return f"""You are a professional meteorologist providing weather advisories.
 
 Use the following WeatherScope downscaling output to write a concise, actionable advisory:
@@ -545,7 +575,8 @@ WEATHER SIGNALS (from downscaled output):
 - Max precipitation (mm/hr, tp): {fmt(tp_max)}
 - Max precipitation (mm/hr, provided): {fmt(max_precipitation)}
 
-Interpretation guidance:
+{customer_context_block}{activity_guidance}Interpretation guidance:
+- Focus on likely weather impacts for the specified region and forecast time.
 - Wind > 10 m/s: strong winds
 - MSL < 1000 hPa: potential storm/low-pressure system
 - Very high/low temperatures: increased weather stress
@@ -606,6 +637,280 @@ def derive_severity(
     return "unknown"
 
 
+LOCATION_BOUNDS_FALLBACK = {
+    "north carolina": {"north": 36.6, "south": 33.8, "east": -75.5, "west": -84.3},
+    "nc": {"north": 36.6, "south": 33.8, "east": -75.5, "west": -84.3},
+    "netherlands": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
+    "nl": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
+    # Greater Miami (approximate)
+    "miami": {"north": 26.10, "south": 25.30, "east": -80.00, "west": -80.55},
+    "miami fl": {"north": 26.10, "south": 25.30, "east": -80.00, "west": -80.55},
+    "miami florida": {"north": 26.10, "south": 25.30, "east": -80.00, "west": -80.55},
+}
+
+
+def _normalize_optional_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    cleaned = " ".join(value.split()).strip()
+    return cleaned or None
+
+
+def _normalize_hours(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if value < 0:
+            return None
+        return int(round(float(value)))
+
+    text = str(value).strip().lower()
+    if not text:
+        return None
+
+    if text.isdigit():
+        return int(text)
+    if text.endswith("h") and text[:-1].strip().isdigit():
+        return int(text[:-1].strip())
+
+    unit_match = re.search(r"(\d+(?:\.\d+)?)\s*(hours?|hrs?|hr|h)\b", text)
+    if unit_match:
+        return int(round(float(unit_match.group(1))))
+    day_match = re.search(r"(\d+(?:\.\d+)?)\s*(days?|d)\b", text)
+    if day_match:
+        return int(round(float(day_match.group(1)) * 24))
+    week_match = re.search(r"(\d+(?:\.\d+)?)\s*(weeks?|w)\b", text)
+    if week_match:
+        return int(round(float(week_match.group(1)) * 24 * 7))
+
+    if "day after tomorrow" in text:
+        return 48
+    if "tomorrow" in text:
+        return 24
+    if "tonight" in text:
+        return 12
+    if "this evening" in text or "this afternoon" in text or "this morning" in text:
+        return 6
+    if "next week" in text:
+        return 168
+    if "next weekend" in text:
+        return 216
+    if "this weekend" in text:
+        return 72
+    if "today" in text:
+        return 0
+    return None
+
+
+def _extract_first_json_object(text: str) -> Optional[Dict[str, Any]]:
+    if not text:
+        return None
+    raw = text.strip()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    start = raw.find("{")
+    while start != -1:
+        depth = 0
+        for idx in range(start, len(raw)):
+            ch = raw[idx]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start : idx + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except json.JSONDecodeError:
+                        break
+        start = raw.find("{", start + 1)
+    return None
+
+
+def _normalize_coordinate(value: Any, axis: str) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if axis == "lat":
+        if num < -90 or num > 90:
+            return None
+    elif axis == "lon":
+        if num < -180 or num > 180:
+            return None
+    return float(round(num, 4))
+
+
+def _normalize_bounds(north: Any, south: Any, east: Any, west: Any) -> Dict[str, Optional[float]]:
+    n = _normalize_coordinate(north, "lat")
+    s = _normalize_coordinate(south, "lat")
+    e = _normalize_coordinate(east, "lon")
+    w = _normalize_coordinate(west, "lon")
+    if None in (n, s, e, w):
+        return {"north": None, "south": None, "east": None, "west": None}
+    if n <= s:
+        return {"north": None, "south": None, "east": None, "west": None}
+    return {"north": n, "south": s, "east": e, "west": w}
+
+
+def _fallback_location(text: str) -> Optional[str]:
+    if not text:
+        return None
+    match = re.search(r"\b(?:in|at|near|around)\s+([a-z0-9][a-z0-9\s,.-]{1,80})", text, re.IGNORECASE)
+    if not match:
+        return None
+    candidate = match.group(1).strip(" .,:;")
+    candidate = re.split(
+        r"\b(?:for|to|on|during|while|with|if|when|because|and)\b",
+        candidate,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" .,:;")
+    return _normalize_optional_text(candidate)
+
+
+def _fallback_activity(text: str) -> Optional[str]:
+    if not text:
+        return None
+    match = re.search(
+        r"\b(?:plan(?:ning)?|going|intend|want|need|will)\s+(?:to\s+)?([a-z][a-z\s-]{2,80})",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        match = re.search(r"\bfor\s+([a-z][a-z\s-]{2,80})", text, re.IGNORECASE)
+    if not match:
+        return None
+    candidate = match.group(1).strip(" .,:;")
+    candidate = re.split(
+        r"\b(?:in|at|on|during|while|with|if|when|because|and)\b",
+        candidate,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" .,:;")
+    return _normalize_optional_text(candidate)
+
+
+def _fallback_bounds_from_location(location: Optional[str], text: str) -> Dict[str, Optional[float]]:
+    candidates = []
+    if location:
+        candidates.append(location.lower())
+    if text:
+        candidates.append(text.lower())
+
+    for phrase, bounds in LOCATION_BOUNDS_FALLBACK.items():
+        for candidate in candidates:
+            if phrase in candidate:
+                return {
+                    "north": float(bounds["north"]),
+                    "south": float(bounds["south"]),
+                    "east": float(bounds["east"]),
+                    "west": float(bounds["west"]),
+                }
+    return {"north": None, "south": None, "east": None, "west": None}
+
+
+async def _google_geocode_bounds(location: Optional[str]) -> Dict[str, Optional[float]]:
+    if not location or not GOOGLE_GEOCODING_API_KEY:
+        return {"north": None, "south": None, "east": None, "west": None}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"address": location, "key": GOOGLE_GEOCODING_API_KEY},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+
+        if payload.get("status") != "OK":
+            logger.warning(f"Google geocode non-OK status for '{location}': {payload.get('status')}")
+            return {"north": None, "south": None, "east": None, "west": None}
+
+        results = payload.get("results") or []
+        if not results:
+            return {"north": None, "south": None, "east": None, "west": None}
+
+        geometry = (results[0] or {}).get("geometry") or {}
+        box = geometry.get("bounds") or geometry.get("viewport") or {}
+        ne = box.get("northeast") or {}
+        sw = box.get("southwest") or {}
+        return _normalize_bounds(
+            ne.get("lat"),
+            sw.get("lat"),
+            ne.get("lng"),
+            sw.get("lng"),
+        )
+    except Exception as e:
+        logger.warning(f"Google geocode failed for '{location}': {e}")
+        return {"north": None, "south": None, "east": None, "west": None}
+
+
+async def _nominatim_geocode_bounds(location: Optional[str]) -> Dict[str, Optional[float]]:
+    if not location:
+        return {"north": None, "south": None, "east": None, "west": None}
+    try:
+        params: Dict[str, Any] = {
+            "q": location,
+            "format": "jsonv2",
+            "limit": 1,
+            "addressdetails": 0,
+        }
+        if NOMINATIM_EMAIL:
+            params["email"] = NOMINATIM_EMAIL
+
+        headers = {"User-Agent": NOMINATIM_USER_AGENT}
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params=params,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+
+        if not isinstance(payload, list) or not payload:
+            return {"north": None, "south": None, "east": None, "west": None}
+
+        first = payload[0] or {}
+        boundingbox = first.get("boundingbox")
+        if isinstance(boundingbox, list) and len(boundingbox) == 4:
+            south, north, west, east = boundingbox
+            return _normalize_bounds(north, south, east, west)
+
+        lat = first.get("lat")
+        lon = first.get("lon")
+        if lat is None or lon is None:
+            return {"north": None, "south": None, "east": None, "west": None}
+
+        lat_f = float(lat)
+        lon_f = float(lon)
+        delta = 0.35
+        return _normalize_bounds(lat_f + delta, lat_f - delta, lon_f + delta, lon_f - delta)
+    except Exception as e:
+        logger.warning(f"Nominatim geocode failed for '{location}': {e}")
+        return {"north": None, "south": None, "east": None, "west": None}
+
+
+async def _resolve_geocode_bounds(location: Optional[str]) -> Dict[str, Optional[float]]:
+    google_bounds = await _google_geocode_bounds(location)
+    if google_bounds.get("north") is not None:
+        return google_bounds
+    return await _nominatim_geocode_bounds(location)
+
+
 # ============================================================================
 # FastAPI App
 # ============================================================================
@@ -656,6 +961,8 @@ class InterpretRequest(BaseModel):
         description="Optional weather-condition payload from inference/downscale output",
         validation_alias=AliasChoices("weather_condition", "inference_output"),
     )
+    customer_text: Optional[str] = Field(None, description="Original customer request text")
+    activity: Optional[str] = Field(None, description="Optional extracted user activity")
 
 class InterpretResponse(BaseModel):
     """Response with natural language interpretation."""
@@ -680,6 +987,22 @@ class HealthResponse(BaseModel):
     model: str
     ollama_running: Optional[bool] = None
     model_available: Optional[bool] = None
+
+
+class ExtractContextRequest(BaseModel):
+    """Request for extracting structured context from user text."""
+    text: str = Field(..., min_length=1, max_length=4000, description="Customer text input")
+
+
+class ExtractContextResponse(BaseModel):
+    """Structured extraction response for dashboard automation."""
+    time: Optional[int] = Field(None, description="Forecast horizon in hours from now")
+    location: Optional[str] = Field(None, description="Location phrase")
+    activity: Optional[str] = Field(None, description="Activity phrase")
+    north: Optional[float] = Field(None, description="Northern latitude bound")
+    south: Optional[float] = Field(None, description="Southern latitude bound")
+    east: Optional[float] = Field(None, description="Eastern longitude bound")
+    west: Optional[float] = Field(None, description="Western longitude bound")
 
 
 # ============================================================================
@@ -715,7 +1038,7 @@ async def root():
         "service": "LLM Weather Interpretation",
         "version": "1.0.0",
         "backend": LLM_BACKEND,
-        "endpoints": ["/health", "/interpret", "/generate", "/config", "/ollama/status", "/ollama/setup"]
+        "endpoints": ["/health", "/interpret", "/extract-context", "/generate", "/config", "/ollama/status", "/ollama/setup"]
     }
 
 
@@ -754,6 +1077,8 @@ async def interpret_weather(request: InterpretRequest):
                 downscale_payload=downscale_payload,
                 severity=severity,
                 max_precipitation=request.max_precipitation,
+                customer_text=request.customer_text,
+                activity=request.activity,
             )
         else:
             # Backward-compatible mode for legacy interpret payloads.
@@ -811,6 +1136,82 @@ async def generate_text(request: GenerateRequest):
         }
     except Exception as e:
         logger.error(f"Generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/extract-context", response_model=ExtractContextResponse)
+async def extract_context(request: ExtractContextRequest):
+    """
+    Extract structured fields from customer text for dashboard automation:
+    time (hours), location, activity, and optional geographic bounds.
+    """
+    if llm_service is None:
+        raise HTTPException(status_code=503, detail="LLM service not initialized")
+
+    customer_text = request.text.strip()
+    if not customer_text:
+        raise HTTPException(status_code=400, detail="text cannot be empty")
+
+    prompt = (
+        "Extract structured weather-intent fields from the customer text.\n"
+        "Return ONLY valid JSON with exactly these keys:\n"
+        '{"time": number|null, "location": string|null, "activity": string|null, '
+        '"north": number|null, "south": number|null, "east": number|null, "west": number|null}\n'
+        "Rules:\n"
+        "- time: forecast horizon in HOURS from now (integer or number).\n"
+        "- location: city/state/country/region phrase if present.\n"
+        "- activity: user plan/activity if present.\n"
+        "- north/south/east/west: bounding box for location if confidently inferable; otherwise null.\n"
+        "- Use null when unknown.\n"
+        f"Customer text: {json.dumps(customer_text, ensure_ascii=True)}"
+    )
+
+    try:
+        raw_response = await llm_service.generate(prompt, max_tokens=256)
+        parsed_obj = _extract_first_json_object(raw_response) or {}
+        parsed_lower = {str(k).lower(): v for k, v in parsed_obj.items()}
+
+        location = _normalize_optional_text(parsed_lower.get("location")) or _fallback_location(customer_text)
+        activity = _normalize_optional_text(parsed_lower.get("activity")) or _fallback_activity(customer_text)
+        parsed_time = _normalize_hours(parsed_lower.get("time"))
+        time_hours = parsed_time if parsed_time is not None else _normalize_hours(customer_text)
+
+        bounds = _normalize_bounds(
+            parsed_lower.get("north"),
+            parsed_lower.get("south"),
+            parsed_lower.get("east"),
+            parsed_lower.get("west"),
+        )
+        if bounds["north"] is None:
+            fallback_bounds = _fallback_bounds_from_location(location, customer_text)
+            bounds = _normalize_bounds(
+                fallback_bounds.get("north"),
+                fallback_bounds.get("south"),
+                fallback_bounds.get("east"),
+                fallback_bounds.get("west"),
+            )
+        if bounds["north"] is None:
+            resolved_bounds = await _resolve_geocode_bounds(location)
+            bounds = _normalize_bounds(
+                resolved_bounds.get("north"),
+                resolved_bounds.get("south"),
+                resolved_bounds.get("east"),
+                resolved_bounds.get("west"),
+            )
+
+        return ExtractContextResponse(
+            time=time_hours,
+            location=location,
+            activity=activity,
+            north=bounds["north"],
+            south=bounds["south"],
+            east=bounds["east"],
+            west=bounds["west"],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Context extraction error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

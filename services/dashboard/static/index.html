@@ -264,7 +264,7 @@
       align-items: center;
       margin-bottom: 8px;
     }
-    input, select, button {
+    input, select, textarea, button {
       border: 1px solid var(--line);
       border-radius: 9px;
       padding: 8px 10px;
@@ -281,6 +281,9 @@
     button:disabled {
       opacity: 0.45;
       cursor: not-allowed;
+    }
+    textarea {
+      font-family: inherit;
     }
 
     .status {
@@ -338,10 +341,49 @@
       min-height: 200px;
       max-height: 460px;
     }
+    .advisory-controls {
+      align-items: stretch;
+    }
+    #advisoryInput {
+      flex: 1 1 100%;
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+      line-height: 1.35;
+    }
+    .advisory-context-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .advisory-context-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fcfcfb;
+      padding: 8px 10px;
+      min-height: 58px;
+    }
+    .advisory-context-key {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.7rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .advisory-context-value {
+      font-size: 0.92rem;
+      line-height: 1.35;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
 
     @media (max-width: 1050px) {
       .gateway-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .step-card { grid-column: span 12; }
+      .advisory-context-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 680px) {
       #gatewayState { min-width: 0; }
@@ -365,6 +407,11 @@
       </div>
       <div class="gateway-links">
         <div class="gateway-link">
+          <span class="service-name">LLM Weather Advisory</span>
+          <span id="link-llm" class="link-pill idle">idle</span>
+          <span id="meta-llm" class="link-meta">No traffic yet</span>
+        </div>
+        <div class="gateway-link">
           <span class="service-name">Global Weather Forecast</span>
           <span id="link-fourcastnet" class="link-pill idle">idle</span>
           <span id="meta-fourcastnet" class="link-meta">No traffic yet</span>
@@ -379,24 +426,43 @@
           <span id="link-map" class="link-pill idle">idle</span>
           <span id="meta-map" class="link-meta">No traffic yet</span>
         </div>
-        <div class="gateway-link">
-          <span class="service-name">LLM Weather Advisory</span>
-          <span id="link-llm" class="link-pill idle">idle</span>
-          <span id="meta-llm" class="link-meta">No traffic yet</span>
-        </div>
       </div>
     </section>
 
     <div class="grid">
       <section class="card step-card">
         <div class="title-row">
-          <h3>Global Forecast</h3>
+          <h3>Advisory</h3>
           <span class="step-badge">Step 1</span>
         </div>
+        <div class="controls advisory-controls">
+          <label for="advisoryInput">customer_text</label>
+          <textarea id="advisoryInput" placeholder="Example: I plan to jog in Miami tomorrow evening around 7 pm."></textarea>
+        </div>
+        <div class="advisory-context-grid">
+          <div class="advisory-context-item">
+            <div class="advisory-context-key">Time (hours)</div>
+            <div id="ctxTime" class="advisory-context-value">Not extracted</div>
+          </div>
+          <div class="advisory-context-item">
+            <div class="advisory-context-key">Location</div>
+            <div id="ctxLocation" class="advisory-context-value">Not extracted</div>
+          </div>
+          <div class="advisory-context-item">
+            <div class="advisory-context-key">Activity</div>
+            <div id="ctxActivity" class="advisory-context-value">Not extracted</div>
+          </div>
+        </div>
+        <div class="status" id="llmStatus">Waiting for downscale output.</div>
+        <pre id="llmOut">No advisory yet.</pre>
+      </section>
+
+      <section class="card step-card">
+        <div class="title-row">
+          <h3>Global Forecast</h3>
+          <span class="step-badge">Step 2</span>
+        </div>
         <div class="controls">
-          <label for="leadTime">lead_time</label>
-          <input id="leadTime" type="number" min="6" max="240" step="6" value="24" title="Use multiples of 6 hours" />
-          <button id="btnForecast">Start Forecast</button>
           <label for="globalVar">variable</label>
           <select id="globalVar">
             <option value="t2m">t2m</option>
@@ -418,16 +484,7 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Regional Forecast</h3>
-          <span class="step-badge">Step 2</span>
-        </div>
-        <div class="controls">
-          <select id="regionSel"></select>
-          <button id="btnExtract">Extract Regional</button>
-          <label for="regionalVar">variable</label>
-          <select id="regionalVar">
-            <option value="t2m">t2m</option>
-          </select>
-          <button id="btnRegionalMap" class="alt">Render Map</button>
+          <span class="step-badge">Step 3</span>
         </div>
         <div class="status" id="regionalStatus">Waiting for global forecast completion.</div>
         <div class="map-wrap">
@@ -439,20 +496,7 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Regional Downscale</h3>
-          <span class="step-badge">Step 3</span>
-        </div>
-        <div class="controls">
-          <label for="methodSel">method</label>
-          <select id="methodSel">
-            <option value="bilinear">bilinear</option>
-            <option value="bicubic">bicubic</option>
-          </select>
-          <button id="btnDownscale">Run Downscale</button>
-          <label for="downscaleVar">variable</label>
-          <select id="downscaleVar">
-            <option value="t2m">t2m</option>
-          </select>
-          <button id="btnDownscaleMap" class="alt">Render Map</button>
+          <span class="step-badge">Step 4</span>
         </div>
         <div class="status" id="downscaleStatus">Waiting for regional extraction.</div>
         <div class="map-wrap">
@@ -461,17 +505,6 @@
         </div>
       </section>
 
-      <section class="card step-card">
-        <div class="title-row">
-          <h3>Advisory</h3>
-          <span class="step-badge">Step 4</span>
-        </div>
-        <div class="controls">
-          <button id="btnInterpret">Generate Advisory</button>
-        </div>
-        <div class="status" id="llmStatus">Waiting for downscale output.</div>
-        <pre id="llmOut">No advisory yet.</pre>
-      </section>
     </div>
   </div>
 
@@ -486,6 +519,7 @@
       downscaled: null,
       downscaleContext: null,
       advisory: null,
+      advisoryContext: null,
       forecastLeadTime: null,
       errors: {
         forecast: null,
@@ -510,6 +544,10 @@
         map: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null, idleTimer: null },
         llm: { status: "idle", inFlight: 0, detail: "No traffic yet", lastMethod: null, lastPath: null, idleTimer: null },
       },
+      autoPipeline: {
+        running: false,
+        completedJobId: null,
+      },
       forecastPollTimer: null,
       gatewayPollTimer: null,
       mapUrls: {
@@ -526,8 +564,106 @@
       llm: "LLM Weather Advisory",
     };
     const LINK_OK_RESET_MS = 5000;
+    const NEXT_SERVICE_DELAY_MS = 5000;
+    const DEFAULT_LEAD_TIME_HOURS = 24;
+    const DEFAULT_REGION_KEY = "CONUS";
+    const DEFAULT_DOWNSCALE_METHOD = "bilinear";
+    const DEFAULT_UPSCALE_FACTOR = 4;
 
     const el = (id) => document.getElementById(id);
+
+    function normalizeLeadTime(value) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return null;
+
+      const rounded = Math.round(parsed);
+      const clamped = Math.min(240, Math.max(6, rounded));
+      const lower = Math.floor(clamped / 6) * 6;
+      const upper = Math.min(240, lower + 6);
+
+      if (upper === lower) return lower;
+      if ((clamped - lower) < (upper - clamped)) return lower;
+      return upper;
+    }
+
+    function normalizeLocationText(value) {
+      if (typeof value !== "string") return "";
+      return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    }
+
+    function trySelectRegionFromLocation(location) {
+      const locNorm = normalizeLocationText(location);
+      if (!locNorm || !state.regions || !Object.keys(state.regions).length) {
+        return null;
+      }
+
+      let bestKey = null;
+      let bestScore = 0;
+
+      Object.keys(state.regions).forEach((key) => {
+        const info = state.regions[key] || {};
+        const keyNorm = normalizeLocationText(key);
+        const nameNorm = normalizeLocationText(info.name || "");
+        const aliases = [keyNorm, nameNorm].filter(Boolean);
+
+        aliases.forEach((alias) => {
+          if (!alias) return;
+          let score = 0;
+          if (locNorm === alias) score = 100;
+          else if (locNorm.includes(alias)) score = 80 + Math.min(alias.length, 15);
+          else if (alias.includes(locNorm)) score = 60 + Math.min(locNorm.length, 15);
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestKey = key;
+          }
+        });
+      });
+
+      return bestKey;
+    }
+
+    function pickRegionKey() {
+      const fromLocation = trySelectRegionFromLocation(
+        state.advisoryContext && typeof state.advisoryContext.location === "string"
+          ? state.advisoryContext.location
+          : ""
+      );
+      if (fromLocation) return fromLocation;
+      if (state.extractContext && typeof state.extractContext.region === "string") {
+        return state.extractContext.region;
+      }
+      if (state.regions && state.regions[DEFAULT_REGION_KEY]) {
+        return DEFAULT_REGION_KEY;
+      }
+      const keys = Object.keys(state.regions || {});
+      return keys.length ? keys[0] : DEFAULT_REGION_KEY;
+    }
+
+    function getSelectedGlobalVariable() {
+      return el("globalVar").value || "t2m";
+    }
+
+    function ensureVariableAvailable(values, variable, scopeLabel) {
+      const keys = Object.keys(values || {});
+      if (keys.includes(variable)) return;
+      throw new Error(`${scopeLabel} variable '${variable}' is not available.`);
+    }
+
+    function getAdvisoryBounds() {
+      const ctx = state.advisoryContext || {};
+      const north = Number(ctx.north);
+      const south = Number(ctx.south);
+      const east = Number(ctx.east);
+      const west = Number(ctx.west);
+
+      if (![north, south, east, west].every((v) => Number.isFinite(v))) return null;
+      if (north <= south) return null;
+      if (north < -90 || north > 90 || south < -90 || south > 90) return null;
+      if (east < -180 || east > 180 || west < -180 || west > 180) return null;
+
+      return { north, south, east, west };
+    }
 
     function normalizePath(path) {
       if (typeof path !== "string") return "";
@@ -538,6 +674,7 @@
       const clean = normalizePath(path);
       if (clean === "/api/downscale") return "inference";
       if (clean.startsWith("/api/map")) return "map";
+      if (clean === "/api/advisory/extract") return "llm";
       if (clean === "/api/interpret") return "llm";
       if (clean.startsWith("/api/")) return "fourcastnet";
       return null;
@@ -768,6 +905,33 @@
       node.classList.toggle("has-content", hasContent);
     }
 
+    function setAdvisoryContext(context) {
+      const timeHours =
+        context && Number.isFinite(Number(context.time)) && Number(context.time) >= 0
+          ? Math.round(Number(context.time))
+          : null;
+      const north = context && Number.isFinite(Number(context.north)) ? Number(context.north) : null;
+      const south = context && Number.isFinite(Number(context.south)) ? Number(context.south) : null;
+      const east = context && Number.isFinite(Number(context.east)) ? Number(context.east) : null;
+      const west = context && Number.isFinite(Number(context.west)) ? Number(context.west) : null;
+      const hasBounds = north !== null && south !== null && east !== null && west !== null;
+      const locationText =
+        context && typeof context.location === "string" && context.location.trim()
+          ? context.location.trim()
+          : "Not found";
+      const locationWithBounds = hasBounds
+        ? `${locationText} [N:${north.toFixed(2)} S:${south.toFixed(2)} E:${east.toFixed(2)} W:${west.toFixed(2)}]`
+        : locationText;
+      const values = {
+        time: timeHours !== null ? `${timeHours} h` : "Not found",
+        location: locationWithBounds,
+        activity: context && typeof context.activity === "string" && context.activity.trim() ? context.activity.trim() : "Not found",
+      };
+      el("ctxTime").textContent = values.time;
+      el("ctxLocation").textContent = values.location;
+      el("ctxActivity").textContent = values.activity;
+    }
+
     function setImage(slot, blob) {
       const mapNode = el(`${slot}Map`);
       const hintNode = el(`${slot}MapHint`);
@@ -793,21 +957,6 @@
       hintNode.textContent = hintText;
     }
 
-    function setVariableOptions(selectId, keys) {
-      const sel = el(selectId);
-      const current = sel.value;
-      sel.innerHTML = "";
-      keys.forEach((k) => {
-        const op = document.createElement("option");
-        op.value = k;
-        op.textContent = k;
-        sel.appendChild(op);
-      });
-      if (keys.includes(current)) {
-        sel.value = current;
-      }
-    }
-
     function stopForecastPolling() {
       if (state.forecastPollTimer) {
         clearInterval(state.forecastPollTimer);
@@ -815,35 +964,24 @@
       }
     }
 
+    async function waitBeforeNextService(statusId, message) {
+      setStatus(statusId, `${message} Starting in ${Math.round(NEXT_SERVICE_DELAY_MS / 1000)} seconds...`, "warn");
+      await new Promise((resolve) => setTimeout(resolve, NEXT_SERVICE_DELAY_MS));
+    }
+
     function updateControls() {
       const forecastDone = state.forecastStatus === "completed";
-      const extractedReady = !!state.extracted;
-      const downscaledReady = !!state.downscaled;
-
       el("btnGlobalMap").disabled = !forecastDone;
-      el("btnExtract").disabled = !forecastDone;
-      el("btnRegionalMap").disabled = !extractedReady;
-      el("btnDownscale").disabled = !extractedReady;
-      el("btnDownscaleMap").disabled = !downscaledReady;
-      el("btnInterpret").disabled = !downscaledReady;
     }
 
     async function loadRegions() {
       // Bootstrap-only call: don't mark a service connection as active/ok.
       const res = await api("/api/regions", { trackGateway: false });
       state.regions = await res.json();
-      const sel = el("regionSel");
-      sel.innerHTML = "";
-      Object.keys(state.regions).forEach((k) => {
-        const op = document.createElement("option");
-        op.value = k;
-        op.textContent = `${k} (${state.regions[k].name})`;
-        sel.appendChild(op);
-      });
     }
 
     async function renderGlobalMap(jobId) {
-      const variable = el("globalVar").value || "t2m";
+      const variable = getSelectedGlobalVariable();
       const res = await api(`/api/global-map/${jobId}?variable=${encodeURIComponent(variable)}&step=0`);
       const blob = await res.blob();
       setImage("global", blob);
@@ -851,9 +989,11 @@
     }
 
     async function renderRegionalMap() {
+      const variable = getSelectedGlobalVariable();
+      ensureVariableAvailable(state.extracted && state.extracted.variables, variable, "Regional map");
       const payload = {
         ...state.extracted,
-        variable: el("regionalVar").value,
+        variable,
       };
       const res = await api("/api/map/regional", {
         method: "POST",
@@ -862,12 +1002,15 @@
       });
       const blob = await res.blob();
       setImage("regional", blob);
+      return variable;
     }
 
     async function renderDownscaleMap() {
+      const variable = getSelectedGlobalVariable();
+      ensureVariableAvailable(state.downscaled && state.downscaled.predictions, variable, "Downscale map");
       const payload = {
         ...state.downscaled,
-        variable: el("downscaleVar").value,
+        variable,
       };
       const res = await api("/api/map/downscale", {
         method: "POST",
@@ -876,6 +1019,246 @@
       });
       const blob = await res.blob();
       setImage("downscale", blob);
+      return variable;
+    }
+
+    async function runRegionalExtract() {
+      if (!state.jobId) return false;
+      const region = pickRegionKey();
+      const step = 0;
+      const advisoryBounds = getAdvisoryBounds();
+      state.busy.extract = true;
+      state.errors.extract = null;
+      state.extractContext = advisoryBounds ? { ...advisoryBounds, step, source: "llm-bounds" } : { region, step };
+      updateControls();
+      try {
+        let extractPath;
+        if (advisoryBounds) {
+          const locationLabel =
+            state.advisoryContext &&
+            typeof state.advisoryContext.location === "string" &&
+            state.advisoryContext.location.trim()
+              ? state.advisoryContext.location.trim()
+              : "Custom Region";
+          extractPath =
+            `/api/extract/${state.jobId}?step=${step}` +
+            `&north=${encodeURIComponent(advisoryBounds.north)}` +
+            `&south=${encodeURIComponent(advisoryBounds.south)}` +
+            `&east=${encodeURIComponent(advisoryBounds.east)}` +
+            `&west=${encodeURIComponent(advisoryBounds.west)}` +
+            `&region_name=${encodeURIComponent(locationLabel)}`;
+        } else {
+          extractPath = `/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&step=${step}`;
+        }
+
+        const res = await api(extractPath);
+        state.extracted = await res.json();
+        state.downscaled = null;
+        state.downscaleContext = null;
+        state.advisory = null;
+        state.errors.downscale = null;
+        state.errors.llm = null;
+        clearImage("downscale", "Downscale map will appear after downscaling.");
+        setStatus("downscaleStatus", "Ready for downscale.");
+        setStatus("llmStatus", "Waiting for downscale output.");
+        setAdvisoryOutput("No advisory yet.");
+
+        const regionLabel = state.extracted.region_name || state.extracted.region || region;
+        setStatus("regionalStatus", `Extracted ${regionLabel}, step=${step}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
+
+        await renderRegionalMap();
+        return true;
+      } catch (e) {
+        state.errors.extract = "extract";
+        setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
+        return false;
+      } finally {
+        state.busy.extract = false;
+        updateControls();
+      }
+    }
+
+    async function runDownscale() {
+      if (!state.extracted) return false;
+      const method = DEFAULT_DOWNSCALE_METHOD;
+      const upscale = DEFAULT_UPSCALE_FACTOR;
+      const advisoryBounds = getAdvisoryBounds();
+      const advisoryLocation =
+        state.advisoryContext &&
+        typeof state.advisoryContext.location === "string" &&
+        state.advisoryContext.location.trim()
+          ? state.advisoryContext.location.trim()
+          : null;
+      const extractedRegionInfo = (state.extracted && typeof state.extracted.region_info === "object" && state.extracted.region_info)
+        ? { ...state.extracted.region_info }
+        : {};
+      const extractedBounds =
+        extractedRegionInfo &&
+        typeof extractedRegionInfo.bounds === "object" &&
+        extractedRegionInfo.bounds
+          ? { ...extractedRegionInfo.bounds }
+          : {};
+      const effectiveBounds = advisoryBounds || (
+        ["north", "south", "east", "west"].every((k) => Number.isFinite(Number(extractedBounds[k])))
+          ? {
+              north: Number(extractedBounds.north),
+              south: Number(extractedBounds.south),
+              east: Number(extractedBounds.east),
+              west: Number(extractedBounds.west),
+            }
+          : null
+      );
+      const regionLabel = advisoryLocation || state.extracted.region_name || "Custom Region";
+      const downscaleRegionInfo = {
+        ...extractedRegionInfo,
+        name: regionLabel,
+        bounds: effectiveBounds || extractedBounds,
+      };
+
+      state.busy.downscale = true;
+      state.errors.downscale = null;
+      state.downscaleContext = { method, upscale, bounds: effectiveBounds };
+      updateControls();
+      try {
+        const downscalePayload = {
+          ...state.extracted,
+          region: effectiveBounds ? "CUSTOM" : state.extracted.region,
+          region_name: regionLabel,
+          region_info: downscaleRegionInfo,
+          upscale_factor: upscale,
+          method,
+        };
+
+        const res = await api("/api/downscale", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(downscalePayload),
+        });
+        state.downscaled = await res.json();
+        state.advisory = null;
+        state.errors.llm = null;
+        setStatus("llmStatus", "Generating advisory from downscale output...", "warn");
+        setAdvisoryOutput("No advisory yet.");
+
+        setStatus(
+          "downscaleStatus",
+          `Downscaled ${method} x${upscale} (${regionLabel}) | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
+          "ok"
+        );
+
+        await renderDownscaleMap();
+        await waitBeforeNextService("llmStatus", "Downscale completed.");
+        await runAdvisoryGeneration();
+        return true;
+      } catch (e) {
+        state.errors.downscale = "downscale";
+        setStatus("downscaleStatus", `Downscale error: ${e.message}`, "err");
+        return false;
+      } finally {
+        state.busy.downscale = false;
+        updateControls();
+      }
+    }
+
+    async function runAdvisoryGeneration() {
+      if (!state.downscaled) return false;
+      state.busy.llm = true;
+      state.errors.llm = null;
+      state.advisory = null;
+      updateControls();
+      try {
+        const extractedTimeHours =
+          state.advisoryContext &&
+          Number.isFinite(Number(state.advisoryContext.time)) &&
+          Number(state.advisoryContext.time) >= 0
+            ? Math.round(Number(state.advisoryContext.time))
+            : null;
+        const forecastHour =
+          extractedTimeHours !== null
+            ? extractedTimeHours
+            : Number(state.forecastLeadTime || 24);
+        const customerLocation =
+          state.advisoryContext &&
+          typeof state.advisoryContext.location === "string" &&
+          state.advisoryContext.location.trim().length > 0
+            ? state.advisoryContext.location.trim()
+            : null;
+        const customerText = el("advisoryInput").value.trim();
+        const customerActivity =
+          state.advisoryContext &&
+          typeof state.advisoryContext.activity === "string" &&
+          state.advisoryContext.activity.trim().length > 0
+            ? state.advisoryContext.activity.trim()
+            : null;
+        const payload = {
+          forecast_hour: forecastHour,
+          weather_condition: state.downscaled,
+        };
+        if (customerLocation) {
+          payload.region = customerLocation;
+        }
+        if (customerText) {
+          payload.customer_text = customerText;
+        }
+        if (customerActivity) {
+          payload.activity = customerActivity;
+        }
+        const res = await api("/api/interpret", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        state.advisory = data;
+        setStatus("llmStatus", `Advisory generated (${data.severity || "unknown"}).`, "ok");
+        setAdvisoryOutput(JSON.stringify(data, null, 2), true);
+        return true;
+      } catch (e) {
+        state.errors.llm = "llm";
+        setStatus("llmStatus", `LLM error: ${e.message}`, "err");
+        setAdvisoryOutput(`Error: ${e.message}`, true);
+        return false;
+      } finally {
+        state.busy.llm = false;
+        updateControls();
+      }
+    }
+
+    async function runAutoRegionalPipeline(jobId) {
+      if (!jobId || state.autoPipeline.running || state.autoPipeline.completedJobId === jobId) {
+        return;
+      }
+      state.autoPipeline.running = true;
+      try {
+        await waitBeforeNextService("regionalStatus", "Global forecast completed.");
+        const extracted = await runRegionalExtract();
+        if (!extracted) return;
+
+        await waitBeforeNextService("downscaleStatus", "Regional forecast completed.");
+        const downscaled = await runDownscale();
+        if (!downscaled) return;
+
+        state.autoPipeline.completedJobId = jobId;
+      } finally {
+        state.autoPipeline.running = false;
+      }
+    }
+
+    async function runRegionalPipelineRefresh() {
+      if (!state.jobId || state.forecastStatus !== "completed") {
+        return false;
+      }
+      if (state.busy.extract || state.busy.downscale) {
+        return false;
+      }
+
+      await waitBeforeNextService("regionalStatus", "Global map refreshed.");
+      const extracted = await runRegionalExtract();
+      if (!extracted) return false;
+
+      await waitBeforeNextService("downscaleStatus", "Regional forecast refreshed.");
+      const downscaled = await runDownscale();
+      return downscaled;
     }
 
     async function refreshForecastStatus() {
@@ -899,6 +1282,9 @@
           } catch (err) {
             setStatus("forecastStatus", `job=${data.job_id} completed, map error: ${err.message}`, "warn");
           }
+          runAutoRegionalPipeline(data.job_id).catch((pipelineErr) => {
+            setStatus("downscaleStatus", `Pipeline error: ${pipelineErr.message}`, "err");
+          });
         }
 
         if (data.status === "failed") {
@@ -921,11 +1307,15 @@
       state.forecastPollTimer = setInterval(refreshForecastStatus, 5000);
     }
 
-    el("btnForecast").onclick = async () => {
-      const leadTime = Number(el("leadTime").value || 24);
-      if (!Number.isInteger(leadTime) || leadTime < 6 || leadTime > 240 || leadTime % 6 !== 0) {
-        setStatus("forecastStatus", "lead_time must be a multiple of 6 between 6 and 240 (e.g., 6, 12, ..., 240).", "err");
-        return;
+    async function startGlobalForecast(rawLeadTime = null) {
+      const requestedLeadTime =
+        rawLeadTime !== null && rawLeadTime !== undefined
+          ? rawLeadTime
+          : DEFAULT_LEAD_TIME_HOURS;
+      const leadTime = normalizeLeadTime(requestedLeadTime);
+      if (leadTime === null) {
+        setStatus("forecastStatus", "lead_time must be numeric.", "err");
+        return false;
       }
 
       state.busy.forecast = true;
@@ -938,6 +1328,8 @@
       state.extractContext = null;
       state.downscaleContext = null;
       state.advisory = null;
+      state.autoPipeline.running = false;
+      state.autoPipeline.completedJobId = null;
       updateControls();
       try {
         stopForecastPolling();
@@ -970,155 +1362,93 @@
         } else if (data.status !== "failed") {
           startForecastPolling();
         }
+        return true;
       } catch (e) {
         state.errors.forecast = "start";
         setStatus("forecastStatus", `Error: ${e.message}`, "err");
+        return false;
       } finally {
         state.busy.forecast = false;
         updateControls();
       }
-    };
+    }
 
     el("btnGlobalMap").onclick = async () => {
       if (!state.jobId || state.forecastStatus !== "completed") return;
       try {
         const variable = await renderGlobalMap(state.jobId);
         setStatus("forecastStatus", `job=${state.jobId} status=completed | global map updated (${variable})`, "ok");
+        await runRegionalPipelineRefresh();
       } catch (e) {
         setStatus("forecastStatus", `Global map error: ${e.message}`, "err");
       }
     };
 
-    el("btnExtract").onclick = async () => {
-      if (!state.jobId) return;
-      const region = el("regionSel").value;
-      const step = 0;
-      state.busy.extract = true;
-      state.errors.extract = null;
-      state.extractContext = { region, step };
-      updateControls();
-      try {
-        const res = await api(`/api/extract/${state.jobId}?region=${encodeURIComponent(region)}&step=${step}`);
-        state.extracted = await res.json();
-        state.downscaled = null;
-        state.downscaleContext = null;
-        state.advisory = null;
-        state.errors.downscale = null;
-        state.errors.llm = null;
-        clearImage("downscale", "Downscale map will appear after downscaling.");
-        setStatus("downscaleStatus", "Ready for downscale.");
-        setStatus("llmStatus", "Waiting for downscale output.");
-        setAdvisoryOutput("No advisory yet.");
-
-        const keys = Object.keys(state.extracted.variables || {});
-        if (keys.length) setVariableOptions("regionalVar", keys);
-
-        setStatus("regionalStatus", `Extracted ${region}, step=${step}, shape=${(state.extracted.shape || []).join("x") || "-"}`, "ok");
-
-        await renderRegionalMap();
-      } catch (e) {
-        state.errors.extract = "extract";
-        setStatus("regionalStatus", `Extract error: ${e.message}`, "err");
-      } finally {
-        state.busy.extract = false;
-        updateControls();
+    async function runExtractContextFromText() {
+      const text = el("advisoryInput").value.trim();
+      if (!text) {
+        setStatus("llmStatus", "Enter customer text to extract details.", "warn");
+        return;
       }
-    };
-
-    el("btnRegionalMap").onclick = async () => {
-      if (!state.extracted) return;
-      try {
-        await renderRegionalMap();
-        setStatus("regionalStatus", `Regional map updated (${el("regionalVar").value}).`, "ok");
-      } catch (e) {
-        setStatus("regionalStatus", `Regional map error: ${e.message}`, "err");
+      if (state.busy.llm) {
+        return;
       }
-    };
 
-    el("btnDownscale").onclick = async () => {
-      if (!state.extracted) return;
-      const method = el("methodSel").value;
-      const upscale = 4;
-      state.busy.downscale = true;
-      state.errors.downscale = null;
-      state.downscaleContext = { method, upscale };
-      updateControls();
-      try {
-        const res = await api("/api/downscale", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...state.extracted,
-            upscale_factor: upscale,
-            method,
-          }),
-        });
-        state.downscaled = await res.json();
-        state.advisory = null;
-        state.errors.llm = null;
-        setStatus("llmStatus", "Ready to generate advisory.");
-        setAdvisoryOutput("No advisory yet.");
-
-        const keys = Object.keys(state.downscaled.predictions || {});
-        if (keys.length) setVariableOptions("downscaleVar", keys);
-
-        setStatus(
-          "downscaleStatus",
-          `Downscaled ${method} x${upscale} | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
-          "ok"
-        );
-
-        await renderDownscaleMap();
-      } catch (e) {
-        state.errors.downscale = "downscale";
-        setStatus("downscaleStatus", `Downscale error: ${e.message}`, "err");
-      } finally {
-        state.busy.downscale = false;
-        updateControls();
-      }
-    };
-
-    el("btnDownscaleMap").onclick = async () => {
-      if (!state.downscaled) return;
-      try {
-        await renderDownscaleMap();
-        setStatus("downscaleStatus", `Downscale map updated (${el("downscaleVar").value}).`, "ok");
-      } catch (e) {
-        setStatus("downscaleStatus", `Downscale map error: ${e.message}`, "err");
-      }
-    };
-
-    el("btnInterpret").onclick = async () => {
-      if (!state.downscaled) return;
       state.busy.llm = true;
       state.errors.llm = null;
-      state.advisory = null;
       updateControls();
       try {
-        const forecastHour = Number(state.forecastLeadTime || 24);
-        const res = await api("/api/interpret", {
+        setStatus("llmStatus", "Extracting time/location/activity from customer text...", "warn");
+        const res = await api("/api/advisory/extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            forecast_hour: forecastHour,
-            weather_condition: state.downscaled,
-          }),
+          body: JSON.stringify({ text }),
         });
         const data = await res.json();
-        state.advisory = data;
-        setStatus("llmStatus", `Advisory generated (${data.severity || "unknown"}).`, "ok");
-        setAdvisoryOutput(JSON.stringify(data, null, 2), true);
+        state.advisoryContext = data;
+        setAdvisoryContext(data);
+        const extractedCount =
+          (Number.isFinite(Number(data.time)) && Number(data.time) >= 0 ? 1 : 0) +
+          (typeof data.location === "string" && data.location.trim().length > 0 ? 1 : 0) +
+          (typeof data.activity === "string" && data.activity.trim().length > 0 ? 1 : 0);
+        const hasBounds = getAdvisoryBounds() !== null;
+        const matchedRegion = trySelectRegionFromLocation(data.location);
+        if (extractedCount > 0) {
+          const bboxMsg = hasBounds ? " + bounds" : "";
+          setStatus("llmStatus", `Extracted ${extractedCount}/3 customer fields${bboxMsg}.`, "ok");
+        } else {
+          setStatus("llmStatus", "No clear time/location/activity detected in customer text.", "warn");
+        }
+
+        const extractedTime =
+          Number.isFinite(Number(data.time)) && Number(data.time) >= 0
+            ? Number(data.time)
+            : null;
+        if (extractedTime !== null) {
+          const normalizedLead = normalizeLeadTime(extractedTime);
+          const regionMsg = matchedRegion ? ` | region=${matchedRegion}` : "";
+          await waitBeforeNextService("llmStatus", `Extracted context ready. Global forecast lead_time=${normalizedLead}${regionMsg}.`);
+          await startGlobalForecast(extractedTime);
+        } else {
+          const regionMsg = matchedRegion ? ` Region set to ${matchedRegion}.` : "";
+          setStatus("llmStatus", `Could not extract lead_time from customer text.${regionMsg}`, "warn");
+        }
       } catch (e) {
-        state.errors.llm = "llm";
-        setStatus("llmStatus", `LLM error: ${e.message}`, "err");
-        setAdvisoryOutput(`Error: ${e.message}`, true);
-      }
-      finally {
+        state.errors.llm = "context";
+        setStatus("llmStatus", `Context extraction error: ${e.message}`, "err");
+      } finally {
         state.busy.llm = false;
         updateControls();
       }
-    };
+    }
 
+    el("advisoryInput").addEventListener("input", updateControls);
+    el("advisoryInput").addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" || event.shiftKey) return;
+      event.preventDefault();
+      await runExtractContextFromText();
+    });
+    setAdvisoryContext(null);
     updateGatewayPanel();
     startGatewayPolling();
 

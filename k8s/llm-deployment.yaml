@@ -11,7 +11,7 @@ data:
   #   LLM_BACKEND=vllm
   #   VLLM_BASE_URL=http://host.k3d.internal:12434
   #   VLLM_API_PREFIX=/engines/v1
-  #   LLM_MODEL=huggingface.co/mlx-community/llama-3.2-3b-instruct-4bit:latest
+  #   LLM_MODEL=huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest
   #
   # For a standard vLLM OpenAI server:
   #   VLLM_BASE_URL=http://<vllm-host>:8000
@@ -20,7 +20,7 @@ data:
   OLLAMA_BASE_URL: "http://ollama-service:11434"
   VLLM_BASE_URL: "http://host.k3d.internal:12434"
   VLLM_API_PREFIX: "/engines/v1"
-  LLM_MODEL: "huggingface.co/mlx-community/llama-3.2-3b-instruct-4bit:latest"
+  LLM_MODEL: "huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest"
 
 ---
 apiVersion: apps/v1

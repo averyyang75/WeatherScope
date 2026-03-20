@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import logging
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 import urllib.request
@@ -118,17 +118,31 @@ era5_cache_lock = threading.Lock()
 
 class ForecastRequest(BaseModel):
     """Request for weather forecast."""
-    lead_time: int = Field(24, ge=6, le=240, description="Forecast hours (6-240, multiples of 6)")
+    lead_time: int = Field(24, ge=6, le=240, description="Forecast hours (6-240). Auto-rounded to nearest 6-hour step")
     date: Optional[str] = Field(None, description="Date YYYYMMDD (default: 5 days ago for CDS)")
     time: str = Field("1200", description="Time HHMM (0000 or 1200)")
     input_source: str = Field("cds", description="Data input: 'cds' (default), 'mars', or 'ecmwf-open-data'")
 
-    @field_validator("lead_time")
+    @field_validator("lead_time", mode="before")
     @classmethod
-    def validate_lead_time_step(cls, value: int) -> int:
-        if value % 6 != 0:
-            raise ValueError("lead_time must be in 6-hour increments (6, 12, ..., 240)")
-        return value
+    def normalize_lead_time_step(cls, value: Any) -> int:
+        if isinstance(value, bool):
+            raise ValueError("lead_time must be a number")
+        try:
+            parsed = int(float(value))
+        except (TypeError, ValueError):
+            raise ValueError("lead_time must be a number")
+
+        clamped = max(6, min(240, parsed))
+        lower = (clamped // 6) * 6
+        upper = min(240, lower + 6)
+
+        if upper == lower:
+            return lower
+
+        if (clamped - lower) < (upper - clamped):
+            return lower
+        return upper
 
 class ForecastStatus(BaseModel):
     """Status of a forecast job."""
@@ -175,6 +189,32 @@ def resolve_region_key(region: str) -> Optional[str]:
     if region in REGIONS:
         return region
     return None
+
+
+def normalize_bounds_payload(
+    north: Any,
+    south: Any,
+    east: Any,
+    west: Any,
+) -> Optional[Dict[str, float]]:
+    try:
+        n = float(north)
+        s = float(south)
+        e = float(east)
+        w = float(west)
+    except (TypeError, ValueError):
+        return None
+
+    if not (-90 <= n <= 90 and -90 <= s <= 90 and -180 <= e <= 180 and -180 <= w <= 180):
+        return None
+    if n <= s:
+        return None
+    return {
+        "north": round(n, 4),
+        "south": round(s, 4),
+        "east": round(e, 4),
+        "west": round(w, 4),
+    }
 
 
 def get_asset_status() -> dict:
@@ -393,18 +433,42 @@ Provide a 2-3 sentence weather advisory for residents, including temperature fee
         return {"error": str(e), "service_url": OLLAMA_URL}
 
 
-def extract_regional_variables(output_file: Path, region: str, step: int = 0) -> dict:
+def extract_regional_variables(
+    output_file: Path,
+    region: Optional[str] = None,
+    step: int = 0,
+    custom_bounds: Optional[Dict[str, Any]] = None,
+    custom_region_name: Optional[str] = None,
+) -> dict:
     """
     Extract t2m/u10/v10/msl regional slices from a forecast GRIB file.
     """
     import xarray as xr
     import numpy as np
 
-    region_key = resolve_region_key(region)
-    if not region_key:
-        raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
+    if custom_bounds is not None:
+        normalized_custom_bounds = normalize_bounds_payload(
+            custom_bounds.get("north"),
+            custom_bounds.get("south"),
+            custom_bounds.get("east"),
+            custom_bounds.get("west"),
+        )
+        if normalized_custom_bounds is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid bounds. Require -90<=south<north<=90 and -180<=west/east<=180",
+            )
+        bounds = {
+            "name": custom_region_name or "Custom Region",
+            **normalized_custom_bounds,
+        }
+        region_key = "CUSTOM"
+    else:
+        region_key = resolve_region_key(region or "")
+        if not region_key:
+            raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
+        bounds = REGIONS[region_key]
 
-    bounds = REGIONS[region_key]
     west_360 = bounds["west"] + 360 if bounds["west"] < 0 else bounds["west"]
     east_360 = bounds["east"] + 360 if bounds["east"] < 0 else bounds["east"]
 
@@ -1218,16 +1282,21 @@ async def run_pipeline(job_id: str, region: str, step: int = 0):
 
 
 @app.get("/forecast/{job_id}/regional")
-async def extract_region(job_id: str, region: str, step: int = 0):
+async def extract_region(
+    job_id: str,
+    region: Optional[str] = Query(None),
+    step: int = Query(0),
+    north: Optional[float] = Query(None),
+    south: Optional[float] = Query(None),
+    east: Optional[float] = Query(None),
+    west: Optional[float] = Query(None),
+    region_name: Optional[str] = Query(None),
+):
     """
     Extract raw regional slices for t2m/u10/v10/msl from a completed forecast.
     """
     if job_id not in running_forecasts:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-    region_key = resolve_region_key(region)
-    if not region_key:
-        raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
 
     job = running_forecasts[job_id]
     if job["status"] != "completed":
@@ -1238,7 +1307,27 @@ async def extract_region(job_id: str, region: str, step: int = 0):
         raise HTTPException(status_code=404, detail="Output file not found")
 
     try:
-        extraction = extract_regional_variables(output_file, region_key, step)
+        has_any_bounds = any(v is not None for v in (north, south, east, west))
+        if has_any_bounds:
+            if None in (north, south, east, west):
+                raise HTTPException(status_code=400, detail="north/south/east/west must all be provided together")
+            extraction = extract_regional_variables(
+                output_file,
+                step=step,
+                custom_bounds={
+                    "north": north,
+                    "south": south,
+                    "east": east,
+                    "west": west,
+                },
+                custom_region_name=region_name or region or "Custom Region",
+            )
+        else:
+            region_key = resolve_region_key(region or "")
+            if not region_key:
+                raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
+            extraction = extract_regional_variables(output_file, region=region_key, step=step)
+
         response_payload = {
             "job_id": job_id,
             "region": extraction["region"],

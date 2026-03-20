@@ -4,7 +4,7 @@
 #   ./scripts/run-local.sh              # Show help
 #   ./scripts/run-local.sh inference    # Run inference service
 #   ./scripts/run-local.sh map          # Run map service
-#   ./scripts/run-local.sh llm          # Run LLM service (default: local vllm-metal + Llama 3.2)
+#   ./scripts/run-local.sh llm          # Run LLM service (default: local vllm-metal + Qwen3 4B)
 #   ./scripts/run-local.sh llm vllm     # Run LLM service with vLLM backend
 #   ./scripts/run-local.sh llm model-runner  # Run LLM service via Docker Model Runner
 #   ./scripts/run-local.sh fourcastnet  # Run FourCastNet service
@@ -28,8 +28,8 @@ fi
 VLLM_PID_FILE="${VLLM_PID_FILE:-/tmp/weatherscope-vllm.pid}"
 VLLM_LOG_FILE="${VLLM_LOG_FILE:-/tmp/weatherscope-vllm.log}"
 VLLM_LOCAL_VENV="${VLLM_LOCAL_VENV:-$HOME/.venv-vllm-metal}"
-DEFAULT_VLLM_MODEL="${DEFAULT_VLLM_MODEL:-mlx-community/Llama-3.2-3B-Instruct-4bit}"
-DEFAULT_MODEL_RUNNER_MODEL="${DEFAULT_MODEL_RUNNER_MODEL:-huggingface.co/mlx-community/llama-3.2-3b-instruct-4bit:latest}"
+DEFAULT_VLLM_MODEL="${DEFAULT_VLLM_MODEL:-Qwen/Qwen3-4B-MLX-4bit}"
+DEFAULT_MODEL_RUNNER_MODEL="${DEFAULT_MODEL_RUNNER_MODEL:-huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest}"
 
 cd "$PROJECT_ROOT"
 
@@ -293,7 +293,7 @@ show_help() {
     echo "Services:"
     echo "  inference     Start inference service (port 8000)"
     echo "  map           Start map service (port 8004)"
-    echo "  llm           Start LLM service (port 8002, default: local vllm-metal + Llama 3.2)"
+    echo "  llm           Start LLM service (port 8002, default: local vllm-metal + Qwen3 4B)"
     echo "  fourcastnet   Start FourCastNet service (port 8003)"
     echo "  dashboard     Start dashboard service (port 8010)"
     echo ""
