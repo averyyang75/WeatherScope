@@ -651,6 +651,27 @@ LOCATION_BOUNDS_OVERRIDE = {
     # Metropolitan France only (exclude overseas territories).
     "france": {"north": 51.3056, "south": 41.2611, "east": 9.8282, "west": -5.4518},
     "french republic": {"north": 51.3056, "south": 41.2611, "east": 9.8282, "west": -5.4518},
+    # Contiguous United States (CONUS).
+    "united states": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
+    "united states of america": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
+    "usa": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
+    "us": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
+    # Mainland Portugal (Portugal Continental).
+    "portugal": {"north": 42.1543, "south": 36.9600, "east": -6.1892, "west": -9.5006},
+    "portuguese republic": {"north": 42.1543, "south": 36.9600, "east": -6.1892, "west": -9.5006},
+    # Mainland Spain (exclude Canary Islands and overseas territories).
+    "spain": {"north": 43.9933, "south": 35.9469, "east": 4.5919, "west": -9.3929},
+    "españa": {"north": 43.9933, "south": 35.9469, "east": 4.5919, "west": -9.3929},
+    "espana": {"north": 43.9933, "south": 35.9469, "east": 4.5919, "west": -9.3929},
+    "kingdom of spain": {"north": 43.9933, "south": 35.9469, "east": 4.5919, "west": -9.3929},
+    # Denmark proper (exclude Greenland/Faroe scope).
+    "denmark": {"north": 57.9524, "south": 54.4517, "east": 15.5531, "west": 7.7153},
+    "danmark": {"north": 57.9524, "south": 54.4517, "east": 15.5531, "west": 7.7153},
+    "kingdom of denmark": {"north": 57.9524, "south": 54.4517, "east": 15.5531, "west": 7.7153},
+    # Mainland Norway (exclude Svalbard, Jan Mayen, Bouvet).
+    "norway": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
+    "norge": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
+    "kingdom of norway": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
 }
 
 
