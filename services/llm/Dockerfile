@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py .
 
 # Environment variables (can be overridden at runtime)
-ENV LLM_BACKEND=ollama
+ENV LLM_BACKEND=vllm
 ENV OLLAMA_BASE_URL=http://ollama-service:11434
-ENV VLLM_BASE_URL=http://vllm:8000
+ENV VLLM_BASE_URL=http://host.docker.internal:12434
 ENV VLLM_API_PREFIX=/v1
-ENV LLM_MODEL=llama3.2:3b
+ENV LLM_MODEL=huggingface.co/qwen/qwen3-4b-mlx-4bit:latest
 ENV PYTHONUNBUFFERED=1
 
 # Expose port

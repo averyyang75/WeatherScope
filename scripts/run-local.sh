@@ -29,7 +29,7 @@ VLLM_PID_FILE="${VLLM_PID_FILE:-/tmp/weatherscope-vllm.pid}"
 VLLM_LOG_FILE="${VLLM_LOG_FILE:-/tmp/weatherscope-vllm.log}"
 VLLM_LOCAL_VENV="${VLLM_LOCAL_VENV:-$HOME/.venv-vllm-metal}"
 DEFAULT_VLLM_MODEL="${DEFAULT_VLLM_MODEL:-Qwen/Qwen3-4B-MLX-4bit}"
-DEFAULT_MODEL_RUNNER_MODEL="${DEFAULT_MODEL_RUNNER_MODEL:-huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest}"
+DEFAULT_MODEL_RUNNER_MODEL="${DEFAULT_MODEL_RUNNER_MODEL:-huggingface.co/qwen/qwen3-4b-mlx-4bit:latest}"
 
 cd "$PROJECT_ROOT"
 
@@ -185,7 +185,7 @@ run_llm() {
         model-runner|vllm-metal)
             export LLM_BACKEND="vllm"
             export VLLM_BASE_URL="${VLLM_BASE_URL:-http://localhost:12434}"
-            export VLLM_API_PREFIX="${VLLM_API_PREFIX:-/engines/v1}"
+            export VLLM_API_PREFIX="${VLLM_API_PREFIX:-/v1}"
             export LLM_MODEL="${LLM_MODEL:-$DEFAULT_MODEL_RUNNER_MODEL}"
             echo -e "${YELLOW}Backend: docker-model-runner (${VLLM_BASE_URL}${VLLM_API_PREFIX})${NC}"
             echo -e "${YELLOW}Model:${NC} ${LLM_MODEL}"

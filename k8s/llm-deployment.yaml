@@ -10,8 +10,8 @@ data:
   # For Docker Model Runner/vllm-metal on Mac host:
   #   LLM_BACKEND=vllm
   #   VLLM_BASE_URL=http://host.k3d.internal:12434
-  #   VLLM_API_PREFIX=/engines/v1
-  #   LLM_MODEL=huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest
+  #   VLLM_API_PREFIX=/v1
+  #   LLM_MODEL=<model id from GET /v1/models>
   #
   # For a standard vLLM OpenAI server:
   #   VLLM_BASE_URL=http://<vllm-host>:8000
@@ -19,8 +19,8 @@ data:
   LLM_BACKEND: "vllm"
   OLLAMA_BASE_URL: "http://ollama-service:11434"
   VLLM_BASE_URL: "http://host.k3d.internal:12434"
-  VLLM_API_PREFIX: "/engines/v1"
-  LLM_MODEL: "huggingface.co/Qwen/Qwen3-4B-MLX-4bit:latest"
+  VLLM_API_PREFIX: "/v1"
+  LLM_MODEL: "huggingface.co/qwen/qwen3-4b-mlx-4bit:latest"
 
 ---
 apiVersion: apps/v1

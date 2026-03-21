@@ -43,9 +43,10 @@ services:
     ports:
       - "8002:8002"
     environment:
-      - LLM_BACKEND=ollama
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LLM_MODEL=llama3.2:3b
+      - LLM_BACKEND=vllm
+      - VLLM_BASE_URL=http://host.docker.internal:12434
+      - VLLM_API_PREFIX=/v1
+      - LLM_MODEL=huggingface.co/qwen/qwen3-4b-mlx-4bit:latest
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

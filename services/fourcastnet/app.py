@@ -639,7 +639,7 @@ def extract_regional_variable_series(
 
             if "step" in data_var.dims:
                 step_count = int(len(data_var.step))
-                step_hours = _step_values_to_hours(data_var.step.values)
+                step_hours = _step_values_to_hours(data_var.step)
             else:
                 step_count = 1
                 step_hours = [0.0]
@@ -1139,11 +1139,13 @@ async def get_forecast_status(job_id: str):
     )
 
 
-def _step_values_to_hours(step_values: Any) -> List[float]:
+def _step_values_to_hours(step_coord: Any) -> List[float]:
     """Normalize GRIB step coordinate values to forecast hours."""
     import numpy as np
 
-    arr = np.asarray(step_values)
+    values = step_coord.values if hasattr(step_coord, "values") else step_coord
+    attrs = step_coord.attrs if hasattr(step_coord, "attrs") and isinstance(step_coord.attrs, dict) else {}
+    arr = np.asarray(values)
     if arr.size == 0:
         return [0.0]
 
@@ -1156,6 +1158,25 @@ def _step_values_to_hours(step_values: Any) -> List[float]:
         hours = seconds.astype(np.float64) / 3600.0
     else:
         hours = arr.astype(np.float64)
+        unit_hint = " ".join(
+            str(attrs.get(key, "")).strip().lower() for key in ("units", "standard_name", "long_name")
+        ).strip()
+        if "day" in unit_hint or unit_hint in {"d"}:
+            hours = hours * 24.0
+        elif "minute" in unit_hint or "min" in unit_hint:
+            hours = hours / 60.0
+        elif "second" in unit_hint or "sec" in unit_hint:
+            hours = hours / 3600.0
+        elif "hour" in unit_hint or unit_hint in {"h", "hr", "hrs"}:
+            pass
+        elif (
+            hours.size <= 3
+            and float(np.nanmin(hours)) >= 0.0
+            and 1.0 <= float(np.nanmax(hours)) <= 2.0
+        ):
+            # Some GRIB readers expose step as plain numeric days (e.g. [0, 1]) with no explicit unit.
+            # Prefer hour semantics for animation/timeline consistency.
+            hours = hours * 24.0
 
     return [float(v) for v in hours.tolist()]
 
@@ -1178,7 +1199,7 @@ def _load_step_metadata(output_file: Path) -> Dict[str, Any]:
             data_var = ds[data_var_name]
             if "step" in data_var.dims:
                 step_count = int(len(data_var.step))
-                step_hours = _step_values_to_hours(data_var.step.values)
+                step_hours = _step_values_to_hours(data_var.step)
             else:
                 step_count = 1
                 step_hours = [0.0]

@@ -129,6 +129,15 @@ LOCATION_BOUNDS_OVERRIDE = {
     "norway": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
     "norge": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
     "kingdom of norway": {"north": 71.1855, "south": 57.9597, "east": 31.2934, "west": 4.4966},
+    # Metropolitan United Kingdom (Great Britain + Northern Ireland; exclude overseas territories).
+    "united kingdom": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "united kingdom of great britain and northern ireland": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "uk": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "u.k": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "great britain": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "britain": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "gb": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
+    "g.b": {"north": 60.8607, "south": 49.8480, "east": 1.7689, "west": -8.6494},
 }
 
 
@@ -668,31 +677,46 @@ async def extract_advisory_context(request: AdvisoryContextRequest):
             raw = fallback_resp.json().get("response", "")
             llm_payload = {str(k).lower(): v for k, v in (_extract_first_json_object(raw) or {}).items()}
         else:
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                try:
+                    detail = (resp.json() or {}).get("detail") or resp.text
+                except Exception:
+                    detail = resp.text
+                raise HTTPException(status_code=resp.status_code, detail=detail or "LLM extraction failed")
             llm_payload = resp.json()
 
-    fallback = _fallback_extract_context(customer_text)
     time_hours = _normalize_hours(llm_payload.get("time"))
     if time_hours is None:
-        time_hours = fallback["time"]
+        raise HTTPException(status_code=400, detail="LLM could not parse time from customer text")
 
-    location = _normalize_optional_text(llm_payload.get("location")) or fallback["location"]
-    activity = _normalize_optional_text(llm_payload.get("activity")) or fallback["activity"]
+    location = _normalize_optional_text(llm_payload.get("location"))
+    if location is None:
+        raise HTTPException(status_code=400, detail="LLM could not parse location from customer text")
+    activity = _normalize_optional_text(llm_payload.get("activity"))
 
-    bounds = _normalize_bounds(
-        llm_payload.get("north"),
-        llm_payload.get("south"),
-        llm_payload.get("east"),
-        llm_payload.get("west"),
-    )
-    if bounds["north"] is None:
-        resolved_bounds = await _resolve_geocode_bounds(location)
+    override_bounds = _location_override_bounds(location)
+    if override_bounds["north"] is not None:
         bounds = _normalize_bounds(
-            resolved_bounds.get("north"),
-            resolved_bounds.get("south"),
-            resolved_bounds.get("east"),
-            resolved_bounds.get("west"),
+            override_bounds.get("north"),
+            override_bounds.get("south"),
+            override_bounds.get("east"),
+            override_bounds.get("west"),
         )
+    else:
+        bounds = _normalize_bounds(
+            llm_payload.get("north"),
+            llm_payload.get("south"),
+            llm_payload.get("east"),
+            llm_payload.get("west"),
+        )
+        if bounds["north"] is None:
+            resolved_bounds = await _resolve_geocode_bounds(location)
+            bounds = _normalize_bounds(
+                resolved_bounds.get("north"),
+                resolved_bounds.get("south"),
+                resolved_bounds.get("east"),
+                resolved_bounds.get("west"),
+            )
 
     return AdvisoryContextResponse(
         time=time_hours,

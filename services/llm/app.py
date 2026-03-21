@@ -112,64 +112,109 @@ class VLLMService(LLMService):
             suffix = f"/{suffix}"
         return f"{self.base_url}{self.api_prefix}{suffix}"
 
+    def _api_url_with_prefix(self, api_prefix: str, suffix: str) -> str:
+        if not suffix.startswith("/"):
+            suffix = f"/{suffix}"
+        prefix = (api_prefix or "/v1").strip()
+        if not prefix.startswith("/"):
+            prefix = f"/{prefix}"
+        return f"{self.base_url}{prefix.rstrip('/')}{suffix}"
+
+    def _prefix_candidates(self) -> list[str]:
+        candidates = [self.api_prefix, "/v1", "/engines/v1", "/engines/llama.cpp/v1", "/engines/vllm/v1"]
+        ordered: list[str] = []
+        for prefix in candidates:
+            normalized = prefix.strip()
+            if not normalized.startswith("/"):
+                normalized = f"/{normalized}"
+            normalized = normalized.rstrip("/")
+            if normalized not in ordered:
+                ordered.append(normalized)
+        return ordered
+
     async def generate(self, prompt: str, max_tokens: int = 512) -> str:
         # Prefer text completions, fallback to chat-completions for providers
-        # that only expose chat endpoint.
+        # that only expose chat endpoint. Also fallback between /engines/v1 and /v1.
         completion_payload = {
             "model": self.model,
             "prompt": prompt,
             "max_tokens": max_tokens,
             "temperature": 0.7,
         }
-        try:
-            response = await self.client.post(
-                self._api_url("/completions"),
-                json=completion_payload,
-            )
-            response.raise_for_status()
-            choices = response.json().get("choices", [])
-            if choices:
-                text = choices[0].get("text")
-                if isinstance(text, str):
-                    return text
-            raise ValueError("vLLM completion response missing choices[0].text")
-        except httpx.HTTPStatusError as e:
-            if e.response is None or e.response.status_code not in (404, 405):
-                logger.error(f"vLLM generation error: {e}")
-                raise
-        except Exception as e:
-            logger.error(f"vLLM generation error: {e}")
-            raise
-
         chat_payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0.7,
         }
-        try:
-            response = await self.client.post(
-                self._api_url("/chat/completions"),
-                json=chat_payload,
-            )
-            response.raise_for_status()
-            choices = response.json().get("choices", [])
-            if choices:
-                message = choices[0].get("message", {})
-                content = message.get("content")
-                if isinstance(content, str):
-                    return content
-            raise ValueError("vLLM chat response missing choices[0].message.content")
-        except Exception as e:
-            logger.error(f"vLLM chat generation error: {e}")
-            raise
+
+        last_error: Exception | None = None
+        for prefix in self._prefix_candidates():
+            completion_url = self._api_url_with_prefix(prefix, "/completions")
+            try:
+                response = await self.client.post(completion_url, json=completion_payload)
+                response.raise_for_status()
+                choices = response.json().get("choices", [])
+                if choices:
+                    text = choices[0].get("text")
+                    if isinstance(text, str):
+                        if prefix != self.api_prefix:
+                            logger.info(f"vLLM prefix fallback in use: {prefix}")
+                        return text
+                last_error = ValueError("vLLM completion response missing choices[0].text")
+            except httpx.HTTPStatusError as e:
+                if e.response is None or e.response.status_code not in (404, 405):
+                    logger.error(f"vLLM generation error: {e}")
+                    raise
+                last_error = e
+            except Exception as e:
+                logger.error(f"vLLM generation error: {e}")
+                raise
+
+            chat_url = self._api_url_with_prefix(prefix, "/chat/completions")
+            try:
+                response = await self.client.post(chat_url, json=chat_payload)
+                response.raise_for_status()
+                choices = response.json().get("choices", [])
+                if choices:
+                    message = choices[0].get("message", {})
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        if prefix != self.api_prefix:
+                            logger.info(f"vLLM prefix fallback in use: {prefix}")
+                        return content
+                last_error = ValueError("vLLM chat response missing choices[0].message.content")
+            except httpx.HTTPStatusError as e:
+                if e.response is None or e.response.status_code not in (404, 405):
+                    logger.error(f"vLLM chat generation error: {e}")
+                    raise
+                last_error = e
+            except Exception as e:
+                logger.error(f"vLLM chat generation error: {e}")
+                raise
+
+        if last_error is not None:
+            logger.error(f"vLLM generation failed on all API prefixes: {last_error}")
+            if isinstance(last_error, httpx.HTTPStatusError) and last_error.response is not None:
+                status_code = last_error.response.status_code
+                body = (last_error.response.text or "").strip()
+                body_snippet = body[:300] if body else ""
+                raise RuntimeError(
+                    f"vLLM endpoint/model lookup failed after trying prefixes "
+                    f"{', '.join(self._prefix_candidates())}. "
+                    f"Last status={status_code}. Last body={body_snippet}"
+                )
+            raise last_error
+        raise RuntimeError("vLLM generation failed on all API prefixes")
 
     async def health_check(self) -> bool:
-        health_candidates = [
-            self._api_url("/models"),
-            f"{self.base_url}/models",
-            f"{self.base_url}/health",
-        ]
+        health_candidates = [self._api_url_with_prefix(prefix, "/models") for prefix in self._prefix_candidates()]
+        health_candidates.extend(
+            [
+                f"{self.base_url}/models",
+                f"{self.base_url}/health",
+            ]
+        )
         try:
             for candidate in health_candidates:
                 response = await self.client.get(candidate)
@@ -1222,10 +1267,15 @@ async def extract_context(request: ExtractContextRequest):
         parsed_obj = _extract_first_json_object(raw_response) or {}
         parsed_lower = {str(k).lower(): v for k, v in parsed_obj.items()}
 
-        location = _normalize_optional_text(parsed_lower.get("location")) or _fallback_location(customer_text)
+        location = _normalize_optional_text(parsed_lower.get("location"))
         activity = _normalize_optional_text(parsed_lower.get("activity")) or _fallback_activity(customer_text)
         parsed_time = _normalize_hours(parsed_lower.get("time"))
-        time_hours = parsed_time if parsed_time is not None else _normalize_hours(customer_text)
+        time_hours = parsed_time
+
+        if time_hours is None:
+            raise HTTPException(status_code=400, detail="LLM could not parse time from customer text")
+        if location is None:
+            raise HTTPException(status_code=400, detail="LLM could not parse location from customer text")
 
         bounds = _normalize_bounds(
             parsed_lower.get("north"),
