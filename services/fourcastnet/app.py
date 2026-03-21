@@ -433,6 +433,37 @@ Provide a 2-3 sentence weather advisory for residents, including temperature fee
         return {"error": str(e), "service_url": OLLAMA_URL}
 
 
+def _select_regional_dataarray(data_var, bounds, xr):
+    """
+    Select a latitude/longitude region from a GRIB-backed DataArray.
+    Handles wrapped longitude ranges on 0..360 grids.
+    """
+    north = float(bounds["north"])
+    south = float(bounds["south"])
+    west = float(bounds["west"])
+    east = float(bounds["east"])
+
+    west_360 = west + 360 if west < 0 else west
+    east_360 = east + 360 if east < 0 else east
+
+    lat_selected = data_var.sel(latitude=slice(north, south))
+    if west_360 <= east_360:
+        regional = lat_selected.sel(longitude=slice(west_360, east_360))
+    else:
+        west_part = lat_selected.sel(longitude=slice(west_360, 360.0))
+        east_part = lat_selected.sel(longitude=slice(0.0, east_360))
+        regional = xr.concat([west_part, east_part], dim="longitude")
+
+    lat_size = int(regional.sizes.get("latitude", 0))
+    lon_size = int(regional.sizes.get("longitude", 0))
+    if lat_size == 0 or lon_size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No grid cells found in requested bounds: {bounds}",
+        )
+    return regional
+
+
 def extract_regional_variables(
     output_file: Path,
     region: Optional[str] = None,
@@ -469,9 +500,6 @@ def extract_regional_variables(
             raise HTTPException(status_code=400, detail=f"Unknown region. Available: {list(REGIONS.keys())}")
         bounds = REGIONS[region_key]
 
-    west_360 = bounds["west"] + 360 if bounds["west"] < 0 else bounds["west"]
-    east_360 = bounds["east"] + 360 if bounds["east"] < 0 else bounds["east"]
-
     extracted_vars = {}
     var_stats = {}
 
@@ -503,10 +531,7 @@ def extract_regional_variables(
                     )
                 data_var = data_var.isel(step=selected_step)
 
-            regional = data_var.sel(
-                latitude=slice(bounds["north"], bounds["south"]),
-                longitude=slice(west_360, east_360),
-            )
+            regional = _select_regional_dataarray(data_var, bounds, xr)
 
             var_data = regional.values.astype(np.float32)
             extracted_vars[var_name] = var_data.tolist()
@@ -590,9 +615,6 @@ def extract_regional_variable_series(
         bounds = REGIONS[region_key]
 
     stride = max(1, int(step_stride))
-    west_360 = bounds["west"] + 360 if bounds["west"] < 0 else bounds["west"]
-    east_360 = bounds["east"] + 360 if bounds["east"] < 0 else bounds["east"]
-
     selected_steps: List[int] | None = None
     selected_hours: Dict[int, float] = {}
     frames_by_step: Dict[int, Dict[str, Any]] = {}
@@ -633,10 +655,7 @@ def extract_regional_variable_series(
                     hour_val = step_hours[step_idx] if step_idx < len(step_hours) else float(step_idx)
                     selected_hours[step_idx] = float(hour_val)
 
-            regional = data_var.sel(
-                latitude=slice(bounds["north"], bounds["south"]),
-                longitude=slice(west_360, east_360),
-            )
+            regional = _select_regional_dataarray(data_var, bounds, xr)
             values = regional.values.astype(np.float32)
             if "step" not in data_var.dims:
                 values = np.expand_dims(values, axis=0)

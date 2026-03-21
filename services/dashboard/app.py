@@ -19,7 +19,6 @@ FOURCASTNET_URL = os.getenv("FOURCASTNET_URL", "http://localhost:8003")
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8000")
 MAP_URL = os.getenv("MAP_URL", "http://localhost:8004")
 LLM_URL = os.getenv("LLM_URL", "http://localhost:8002")
-GOOGLE_GEOCODING_API_KEY = os.getenv("GOOGLE_GEOCODING_API_KEY", "").strip()
 NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "WeatherScope/1.0").strip()
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "").strip()
 
@@ -105,6 +104,12 @@ LOCATION_BOUNDS_FALLBACK = {
     "miami florida": {"north": 26.10, "south": 25.30, "east": -80.00, "west": -80.55},
 }
 
+LOCATION_BOUNDS_OVERRIDE = {
+    # Metropolitan France only (exclude overseas territories).
+    "france": {"north": 51.3056, "south": 41.2611, "east": 9.8282, "west": -5.4518},
+    "french republic": {"north": 51.3056, "south": 41.2611, "east": 9.8282, "west": -5.4518},
+}
+
 
 def _normalize_optional_text(value: Any) -> str | None:
     if value is None:
@@ -143,53 +148,66 @@ def _normalize_bounds(north: Any, south: Any, east: Any, west: Any) -> Dict[str,
     return {"north": n, "south": s, "east": e, "west": w}
 
 
-def _fallback_bounds_from_location(location: str | None, text: str) -> Dict[str, float | None]:
-    candidates = []
-    if location:
-        candidates.append(location.lower())
-    if text:
-        candidates.append(text.lower())
-    for phrase, bounds in LOCATION_BOUNDS_FALLBACK.items():
-        for candidate in candidates:
-            if phrase in candidate:
-                return {
-                    "north": float(bounds["north"]),
-                    "south": float(bounds["south"]),
-                    "east": float(bounds["east"]),
-                    "west": float(bounds["west"]),
-                }
-    return {"north": None, "south": None, "east": None, "west": None}
+def _location_override_bounds(location: str | None) -> Dict[str, float | None]:
+    if not location:
+        return {"north": None, "south": None, "east": None, "west": None}
+    key = re.sub(r"\s+", " ", location.strip().lower()).strip(" .,:;")
+    bounds = LOCATION_BOUNDS_OVERRIDE.get(key)
+    if not bounds:
+        return {"north": None, "south": None, "east": None, "west": None}
+    return {
+        "north": float(bounds["north"]),
+        "south": float(bounds["south"]),
+        "east": float(bounds["east"]),
+        "west": float(bounds["west"]),
+    }
 
 
-async def _google_geocode_bounds(location: str | None) -> Dict[str, float | None]:
-    if not location or not GOOGLE_GEOCODING_API_KEY:
+async def _photon_geocode_bounds(location: str | None) -> Dict[str, float | None]:
+    if not location:
         return {"north": None, "south": None, "east": None, "west": None}
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(
-                "https://maps.googleapis.com/maps/api/geocode/json",
-                params={"address": location, "key": GOOGLE_GEOCODING_API_KEY},
+                "https://photon.komoot.io/api/",
+                params={"q": location, "limit": 1},
             )
             resp.raise_for_status()
             payload = resp.json()
 
-        if payload.get("status") != "OK":
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if not isinstance(features, list) or not features:
             return {"north": None, "south": None, "east": None, "west": None}
 
-        results = payload.get("results") or []
-        if not results:
-            return {"north": None, "south": None, "east": None, "west": None}
+        first = features[0] or {}
+        bbox = first.get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            west, lat1, east, lat2 = bbox
+            bounds = _normalize_bounds(lat2, lat1, east, west)
+            if bounds["north"] is None:
+                bounds = _normalize_bounds(lat1, lat2, east, west)
+            if bounds["north"] is not None:
+                return bounds
 
-        geometry = (results[0] or {}).get("geometry") or {}
-        box = geometry.get("bounds") or geometry.get("viewport") or {}
-        ne = box.get("northeast") or {}
-        sw = box.get("southwest") or {}
-        return _normalize_bounds(
-            ne.get("lat"),
-            sw.get("lat"),
-            ne.get("lng"),
-            sw.get("lng"),
-        )
+        properties = first.get("properties") if isinstance(first.get("properties"), dict) else {}
+        extent = properties.get("extent")
+        if isinstance(extent, list) and len(extent) == 4:
+            west, lat1, east, lat2 = extent
+            bounds = _normalize_bounds(lat2, lat1, east, west)
+            if bounds["north"] is None:
+                bounds = _normalize_bounds(lat1, lat2, east, west)
+            if bounds["north"] is not None:
+                return bounds
+
+        geometry = first.get("geometry") if isinstance(first.get("geometry"), dict) else {}
+        coords = geometry.get("coordinates")
+        if isinstance(coords, list) and len(coords) >= 2:
+            lon_f = float(coords[0])
+            lat_f = float(coords[1])
+            delta = 0.35
+            return _normalize_bounds(lat_f + delta, lat_f - delta, lon_f + delta, lon_f - delta)
+
+        return {"north": None, "south": None, "east": None, "west": None}
     except Exception:
         return {"north": None, "south": None, "east": None, "west": None}
 
@@ -239,10 +257,24 @@ async def _nominatim_geocode_bounds(location: str | None) -> Dict[str, float | N
 
 
 async def _resolve_geocode_bounds(location: str | None) -> Dict[str, float | None]:
-    google_bounds = await _google_geocode_bounds(location)
-    if google_bounds.get("north") is not None:
-        return google_bounds
-    return await _nominatim_geocode_bounds(location)
+    override_bounds = _location_override_bounds(location)
+    if override_bounds.get("north") is not None:
+        return override_bounds
+
+    nominatim_bounds = await _nominatim_geocode_bounds(location)
+    if nominatim_bounds.get("north") is not None:
+        return nominatim_bounds
+
+    photon_bounds = await _photon_geocode_bounds(location)
+    if photon_bounds.get("north") is not None:
+        return photon_bounds
+
+    return {
+        "north": float(LOCATION_BOUNDS_FALLBACK["north carolina"]["north"]),
+        "south": float(LOCATION_BOUNDS_FALLBACK["north carolina"]["south"]),
+        "east": float(LOCATION_BOUNDS_FALLBACK["north carolina"]["east"]),
+        "west": float(LOCATION_BOUNDS_FALLBACK["north carolina"]["west"]),
+    }
 
 
 def _normalize_hours(value: Any) -> int | None:
@@ -633,20 +665,12 @@ async def extract_advisory_context(request: AdvisoryContextRequest):
         llm_payload.get("west"),
     )
     if bounds["north"] is None:
-        fallback_bounds = _fallback_bounds_from_location(location, customer_text)
+        resolved_bounds = await _resolve_geocode_bounds(location)
         bounds = _normalize_bounds(
-            fallback_bounds.get("north"),
-            fallback_bounds.get("south"),
-            fallback_bounds.get("east"),
-            fallback_bounds.get("west"),
-        )
-    if bounds["north"] is None:
-        google_bounds = await _resolve_geocode_bounds(location)
-        bounds = _normalize_bounds(
-            google_bounds.get("north"),
-            google_bounds.get("south"),
-            google_bounds.get("east"),
-            google_bounds.get("west"),
+            resolved_bounds.get("north"),
+            resolved_bounds.get("south"),
+            resolved_bounds.get("east"),
+            resolved_bounds.get("west"),
         )
 
     return AdvisoryContextResponse(

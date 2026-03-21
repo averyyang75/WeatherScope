@@ -364,6 +364,14 @@ def _render_single_regional_map(
     data = np.array(variables[var_key], dtype=np.float32)
     if data.ndim != 2:
         raise HTTPException(status_code=400, detail=f"Variable {var_key} must be a 2D array")
+    if data.shape[0] == 0 or data.shape[1] == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Variable {var_key} has empty grid shape {data.shape}. "
+                "No grid cells were selected for the requested bounds."
+            ),
+        )
 
     style = REGIONAL_STYLE.get(var_key, {"label": var_key, "unit": "", "cmap": "viridis"})
     if var_key == "t2m":
@@ -599,6 +607,20 @@ async def render_map(request: MapRequest):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Variable {var_name} must be 2D in both original and downscaled payloads",
+                )
+            if (
+                original.shape[0] == 0
+                or original.shape[1] == 0
+                or downscaled.shape[0] == 0
+                or downscaled.shape[1] == 0
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Variable {var_name} has empty grid shape "
+                        f"original={original.shape}, downscaled={downscaled.shape}. "
+                        "No grid cells were selected for the requested bounds."
+                    ),
                 )
 
             var_style = style.get(var_name, {"label": var_name, "cmap": "viridis"})
