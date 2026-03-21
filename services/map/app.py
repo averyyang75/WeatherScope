@@ -726,13 +726,6 @@ async def render_downscale_map(request: DownscaleMapRequest):
         raise HTTPException(status_code=500, detail="matplotlib not installed")
 
     try:
-        subtitle_parts = []
-        if request.method:
-            subtitle_parts.append(str(request.method))
-        if request.upscale_factor:
-            subtitle_parts.append(f"x{request.upscale_factor}")
-        subtitle = " ".join(subtitle_parts) if subtitle_parts else None
-
         return _render_single_regional_map(
             variables=request.predictions or {},
             region=request.region,
@@ -741,7 +734,7 @@ async def render_downscale_map(request: DownscaleMapRequest):
             variable=request.variable,
             step=request.step,
             title_prefix="Downscaled",
-            subtitle=subtitle,
+            subtitle=None,
         )
     except HTTPException:
         raise

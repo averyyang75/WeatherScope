@@ -250,13 +250,6 @@
       margin-bottom: 8px;
     }
     .title-row h3 { margin: 0; }
-    .step-badge {
-      font-size: 0.78rem;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
     .controls {
       display: flex;
       flex-wrap: wrap;
@@ -382,6 +375,14 @@
     .downscale-animation-controls {
       margin-bottom: 8px;
     }
+    .controls.align-placeholder {
+      visibility: hidden;
+      pointer-events: none;
+      min-height: 42px;
+    }
+    .status.align-placeholder {
+      visibility: hidden;
+    }
     .toggle-inline {
       display: inline-flex;
       align-items: center;
@@ -412,7 +413,10 @@
       min-width: 78px;
       text-align: right;
     }
-
+    #regionalMapWrap,
+    #downscaleMapWrap {
+      min-height: 240px;
+    }
     @media (max-width: 1050px) {
       .gateway-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .step-card { grid-column: span 12; }
@@ -466,10 +470,8 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Advisory</h3>
-          <span class="step-badge">Step 1</span>
         </div>
         <div class="controls advisory-controls">
-          <label for="advisoryInput">customer_text</label>
           <textarea id="advisoryInput" placeholder="Example: I plan to jog in Miami tomorrow evening around 7 pm."></textarea>
         </div>
         <div class="advisory-context-grid">
@@ -493,7 +495,6 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Global Forecast</h3>
-          <span class="step-badge">Step 2</span>
         </div>
         <div class="controls">
           <label for="globalVar">variable</label>
@@ -517,10 +518,11 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Regional Forecast</h3>
-          <span class="step-badge">Step 3</span>
         </div>
+        <div class="controls align-placeholder" aria-hidden="true"></div>
         <div class="status" id="regionalStatus">Waiting for global forecast completion.</div>
-        <div class="map-wrap">
+        <div class="status align-placeholder" aria-hidden="true">.</div>
+        <div id="regionalMapWrap" class="map-wrap">
           <img id="regionalMap" alt="regional map" hidden />
           <div id="regionalMapHint" class="hint">Regional map will appear after extraction.</div>
         </div>
@@ -529,33 +531,19 @@
       <section class="card step-card">
         <div class="title-row">
           <h3>Regional Downscale</h3>
-          <span class="step-badge">Step 4</span>
         </div>
         <div class="controls downscale-animation-controls">
-          <label class="toggle-inline" for="downscaleAutoPlay">
-            <input id="downscaleAutoPlay" type="checkbox" checked />
-            auto-play
-          </label>
-          <label for="downscaleSpeedMs">speed</label>
-          <select id="downscaleSpeedMs">
-            <option value="500">2x</option>
-            <option value="750">1.5x</option>
-            <option value="1000" selected>1x</option>
-            <option value="1500">0.7x</option>
-            <option value="2000">0.5x</option>
-          </select>
           <button id="btnDownscalePlay" class="alt" disabled>Play</button>
           <input id="downscaleStepSlider" type="range" min="0" max="0" value="0" disabled />
           <span id="downscaleStepLabel" class="frame-label">Frame --/--</span>
         </div>
         <div class="status" id="downscaleStatus">Waiting for regional extraction.</div>
         <div class="status" id="downscaleAnimStatus">Animation idle.</div>
-        <div class="map-wrap">
+        <div id="downscaleMapWrap" class="map-wrap">
           <img id="downscaleMap" alt="downscale map" hidden />
           <div id="downscaleMapHint" class="hint">Downscale map will appear after downscaling.</div>
         </div>
       </section>
-
     </div>
   </div>
 
@@ -1007,17 +995,6 @@
       el("ctxActivity").textContent = values.activity;
     }
 
-    function isDownscaleAutoPlayEnabled() {
-      const node = el("downscaleAutoPlay");
-      return !!(node && node.checked);
-    }
-
-    function getDownscaleAnimationIntervalMs() {
-      const node = el("downscaleSpeedMs");
-      const value = Number(node && node.value ? node.value : 1000);
-      return Number.isFinite(value) && value > 0 ? value : 1000;
-    }
-
     function restoreStaticDownscaleImage() {
       const mapNode = el("downscaleMap");
       const hintNode = el("downscaleMapHint");
@@ -1110,11 +1087,18 @@
         return;
       }
       stopDownscaleAnimationPlayback();
-      state.downscaleAnimation.intervalMs = getDownscaleAnimationIntervalMs();
+      if (state.downscaleAnimation.currentIndex >= frameCount - 1) {
+        showDownscaleAnimationFrame(0);
+      }
       state.downscaleAnimation.playing = true;
       updateDownscaleAnimationControls();
       state.downscaleAnimation.timer = setInterval(() => {
-        const nextIndex = (state.downscaleAnimation.currentIndex + 1) % frameCount;
+        const nextIndex = state.downscaleAnimation.currentIndex + 1;
+        if (nextIndex >= frameCount) {
+          stopDownscaleAnimationPlayback();
+          showDownscaleAnimationFrame(frameCount - 1);
+          return;
+        }
         showDownscaleAnimationFrame(nextIndex);
       }, state.downscaleAnimation.intervalMs);
     }
@@ -1183,14 +1167,6 @@
     function updateControls() {
       const forecastDone = state.forecastStatus === "completed";
       el("btnGlobalMap").disabled = !forecastDone;
-      const speedNode = el("downscaleSpeedMs");
-      if (speedNode) {
-        speedNode.disabled = state.downscaleAnimation.building;
-      }
-      const autoPlayNode = el("downscaleAutoPlay");
-      if (autoPlayNode) {
-        autoPlayNode.disabled = state.downscaleAnimation.building;
-      }
       updateDownscaleAnimationControls();
     }
 
@@ -1474,7 +1450,7 @@
       };
     }
 
-    async function buildDownscaleAnimationFrames({ autoplay = true } = {}) {
+    async function buildDownscaleAnimationFrames({ autoplay = true, initialFrame = "first" } = {}) {
       if (!state.jobId || state.forecastStatus !== "completed") return false;
       if (!state.downscaled) return false;
       if (state.downscaleAnimation.building) return false;
@@ -1554,7 +1530,10 @@
           return false;
         }
 
-        showDownscaleAnimationFrame(0);
+        const initialIndex = initialFrame === "last"
+          ? Math.max(0, state.downscaleAnimation.frames.length - 1)
+          : 0;
+        showDownscaleAnimationFrame(initialIndex);
         setStatus("downscaleAnimStatus", `Animation ready: ${hourlyPlans.length} frame(s), 1-hour interval.`, "ok");
         if (autoplay && hourlyPlans.length > 1) {
           startDownscaleAnimationPlayback();
@@ -1617,7 +1596,6 @@
     async function runDownscale() {
       if (!state.extracted) return false;
       const { method, upscale, regionLabel, effectiveBounds, payload: downscalePayload } = buildDownscalePayloadFromExtracted(state.extracted);
-      const autoPlay = isDownscaleAutoPlayEnabled();
       const targetHour = Number.isFinite(Number(state.extracted.hour))
         ? Math.round(Number(state.extracted.hour))
         : getRequestedForecastHour();
@@ -1640,21 +1618,20 @@
 
         setStatus(
           "downscaleStatus",
-          `Downscaled ${method} x${upscale} (${regionLabel})${Number.isFinite(Number(targetHour)) ? ` @ h+${Math.round(Number(targetHour))}` : ""} | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
+          `Downscaled (${regionLabel})${Number.isFinite(Number(targetHour)) ? ` @ h+${Math.round(Number(targetHour))}` : ""} | ${(state.downscaled.input_shape || []).join("x")} -> ${(state.downscaled.output_shape || []).join("x")}`,
           "ok"
         );
 
         await renderDownscaleMap();
-        if (autoPlay) {
-          buildDownscaleAnimationFrames({ autoplay: true }).catch((animationErr) => {
-            setStatus("downscaleAnimStatus", `Animation error: ${animationErr.message}`, "err");
-          });
-          await runAdvisoryGeneration();
-        } else {
-          setStatus("downscaleAnimStatus", "Auto-play is off. Press Play to build animation.", "warn");
-          await waitBeforeNextService("llmStatus", "Downscale completed.");
-          await runAdvisoryGeneration();
-        }
+        buildDownscaleAnimationFrames({
+          autoplay: false,
+          initialFrame: "last",
+        }).catch((animationErr) => {
+          setStatus("downscaleAnimStatus", `Animation error: ${animationErr.message}`, "err");
+        });
+        setStatus("downscaleAnimStatus", "Showing latest frame. Press Play for animation.", "warn");
+        await waitBeforeNextService("llmStatus", "Downscale completed.");
+        await runAdvisoryGeneration();
         return true;
       } catch (e) {
         state.errors.downscale = "downscale";
@@ -1982,21 +1959,6 @@
       if (!Number.isFinite(idx)) return;
       stopDownscaleAnimationPlayback();
       showDownscaleAnimationFrame(Math.round(idx));
-    });
-
-    el("downscaleSpeedMs").addEventListener("change", () => {
-      state.downscaleAnimation.intervalMs = getDownscaleAnimationIntervalMs();
-      if (state.downscaleAnimation.playing) {
-        startDownscaleAnimationPlayback();
-      }
-      updateDownscaleAnimationControls();
-    });
-
-    el("downscaleAutoPlay").addEventListener("change", () => {
-      if (!isDownscaleAutoPlayEnabled()) {
-        stopDownscaleAnimationPlayback();
-      }
-      updateDownscaleAnimationControls();
     });
 
     el("globalVar").addEventListener("change", () => {
