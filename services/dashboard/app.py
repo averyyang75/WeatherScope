@@ -113,6 +113,11 @@ LOCATION_BOUNDS_OVERRIDE = {
     "united states of america": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
     "usa": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
     "us": {"north": 49.3844, "south": 24.3963, "east": -66.9346, "west": -124.8489},
+    # Metropolitan Netherlands (European part only; exclude Caribbean Netherlands).
+    "netherlands": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
+    "the netherlands": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
+    "holland": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
+    "nl": {"north": 53.7, "south": 50.7, "east": 7.3, "west": 3.2},
     # Mainland Portugal (Portugal Continental).
     "portugal": {"north": 42.1543, "south": 36.9600, "east": -6.1892, "west": -9.5006},
     "portuguese republic": {"north": 42.1543, "south": 36.9600, "east": -6.1892, "west": -9.5006},
