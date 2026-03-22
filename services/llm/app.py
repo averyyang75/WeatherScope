@@ -31,7 +31,8 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
 VLLM_API_PREFIX = os.getenv("VLLM_API_PREFIX", "/v1")
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")
-INTERPRET_MAX_TOKENS = int(os.getenv("INTERPRET_MAX_TOKENS", "192"))
+INTERPRET_MAX_TOKENS = int(os.getenv("INTERPRET_MAX_TOKENS", "320"))
+LLM_STOP_SEQUENCES = ["<|endoftext|>", "<|eot_id|>", "Human:", "User:", "Assistant:"]
 NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "WeatherScope/1.0").strip()
 NOMINATIM_EMAIL = os.getenv("NOMINATIM_EMAIL", "").strip()
 
@@ -140,12 +141,14 @@ class VLLMService(LLMService):
             "prompt": prompt,
             "max_tokens": max_tokens,
             "temperature": 0.7,
+            "stop": LLM_STOP_SEQUENCES,
         }
         chat_payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0.7,
+            "stop": LLM_STOP_SEQUENCES,
         }
 
         last_error: Exception | None = None
@@ -630,7 +633,338 @@ Provide:
 2) 2-3 sentence summary for residents
 3) Recommended actions
 
-Keep it under 200 words."""
+Keep it under 200 words.
+Do not include drafting notes (for example: "Answer:", "Use bold...").
+Ensure the response ends with a complete sentence."""
+
+
+def _clean_generated_alert(alert: str, prompt: Optional[str] = None) -> str:
+    """Strip common LLM preface noise and trailing incomplete fragments."""
+    text = (alert or "").strip()
+    if not text:
+        return text
+
+    # Hard-cut leaked role/eot continuations that may appear when generation
+    # spills into a new synthetic dialogue turn.
+    lower_text = text.lower()
+    literal_cut_markers = [
+        "<|endoftext|>",
+        "<|eot_id|>",
+    ]
+    cut_positions = [lower_text.find(marker) for marker in literal_cut_markers if lower_text.find(marker) >= 0]
+    end_tag_match = re.search(r"\[\s*end[^\]\n]*(?:\]|$)", text, flags=re.IGNORECASE)
+    if end_tag_match:
+        cut_positions.append(end_tag_match.start())
+    role_leak = re.search(r"(?i)(?:^|\s)(human|user|assistant)\s*:", text)
+    if role_leak:
+        cut_positions.append(role_leak.start())
+    reflection_cues = [
+        r"(?i)\bwait,\s*(?:the|i)\b",
+        r"(?i)\bshould i\b",
+        r"(?i)\blet me\b",
+        r"(?i)\bi need to\b",
+        r"(?i)\bthe summary says\b",
+        r"(?i)\bcustomer is planning\b",
+    ]
+    for cue in reflection_cues:
+        match = re.search(cue, text)
+        if match and match.start() > 80:
+            cut_positions.append(match.start())
+    if cut_positions:
+        text = text[: min(cut_positions)].strip()
+        if not text:
+            return text
+
+    # Normalize leaked inline section tags.
+    text = re.sub(r"\[\s*summary\s*\]\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\[\s*recommended actions?\s*\]\s*",
+        "\n\nRecommended actions: ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\[\s*end of text\s*\]\s*", "", text, flags=re.IGNORECASE)
+
+    def normalize_fragment(raw: str) -> str:
+        norm = re.sub(r"[*_`#>\-\[\]\(\)\"]+", " ", raw.lower())
+        norm = re.sub(r"[^a-z0-9 ]+", " ", norm)
+        norm = re.sub(r"\s+", " ", norm).strip()
+        return norm
+
+    def is_instruction_like(normalized: str) -> bool:
+        cues = (
+            "use the following",
+            "provide",
+            "make sure",
+            "ensure",
+            "keep it",
+            "do not",
+            "dont",
+            "must",
+            "should",
+            "structure",
+            "answer",
+            "headline",
+            "summary",
+            "recommended actions",
+        )
+        return any(cue in normalized for cue in cues)
+
+    prompt_fragments: set[str] = set()
+    if prompt:
+        prompt_text = str(prompt)
+        for frag in re.split(r"\n+|(?<=[.!?])\s+", prompt_text):
+            normalized = normalize_fragment(frag)
+            if len(normalized.split(" ")) >= 4:
+                prompt_fragments.add(normalized)
+
+    # Remove leaked placeholder tags like:
+    # [Alert Headline] [Summary for residents] [Recommended actions]
+    text = re.sub(
+        r"^\s*(?:\[(?:alert headline|headline|summary(?: for residents)?|recommended actions?)\]\s*)+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # If an advisory heading exists later in the text, trim leaked preface instructions.
+    advisory_anchor = re.search(r"\b(?:weather|regional|local)?\s*advisory\b", text, flags=re.IGNORECASE)
+    if advisory_anchor and advisory_anchor.start() > 0:
+        prefix = text[: advisory_anchor.start()].lower()
+        if any(
+            token in prefix
+            for token in (
+                "make sure",
+                "should be",
+                "must be",
+                "not exceed",
+                "structure",
+                "use the following",
+                "paragraph",
+            )
+        ):
+            text = text[advisory_anchor.start():].strip()
+
+    def clean_section_content(raw: str) -> str:
+        cleaned = raw.strip()
+        # Strip leading bracket labels like [Headline], [Summary], [Recommended actions].
+        cleaned = re.sub(r"^(?:\[[^\]]+\]\s*)+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^(headline|summary|recommended actions?)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
+
+    def extract_indexed_sections(raw_text: str) -> Optional[str]:
+        markers = list(re.finditer(r"\[\s*([123])\s*\]", raw_text))
+        if not markers:
+            return None
+
+        sections: Dict[int, str] = {}
+        for idx, marker in enumerate(markers):
+            section_num = int(marker.group(1))
+            start = marker.end()
+            end = markers[idx + 1].start() if idx + 1 < len(markers) else len(raw_text)
+            content = clean_section_content(raw_text[start:end])
+            if content and section_num not in sections:
+                sections[section_num] = content
+
+        if not all(k in sections for k in (1, 2, 3)):
+            return None
+
+        headline = sections[1].rstrip(".")
+        summary = sections[2]
+        actions = sections[3]
+        result = f"{headline}\n\n{summary}\n\nRecommended actions: {actions}".strip()
+        if result and result[-1] not in ".!?":
+            result = f"{result}."
+        return result
+
+    structured = extract_indexed_sections(text)
+    if structured:
+        return structured
+
+    def normalize_line(raw: str) -> str:
+        no_md = re.sub(r"[*_`#>\-]+", "", raw)
+        no_md = no_md.replace("\\n", " ")
+        return re.sub(r"\s+", " ", no_md).strip().lower()
+
+    # Remove explicit leading answer markers and instruction-leak lines.
+    text = re.sub(r"^\s*answer\s*:\s*", "", text, flags=re.IGNORECASE).strip()
+    # Drop leading instruction sentences before the actual advisory body.
+    lead_sentence_drop_pattern = re.compile(
+        r"^\s*(?:"
+        r"(?:make sure|ensure|keep|use|follow|provide)\b[^.?!]*[.?!]\s*|"
+        r"(?:the paragraph|summary|actions?)\b[^.?!]*[.?!]\s*|"
+        r"(?:do not|don't|must|should)\b[^.?!]*[.?!]\s*"
+        r")+",
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(lead_sentence_drop_pattern, "", text).strip()
+    instruction_patterns = [
+        r"^\(e\.g\.,?.*\)$",
+        r"^also,\s*make sure.*$",
+        r"^use bold.*$",
+        r"^answer\s*:\s*$",
+    ]
+    filtered_lines: List[str] = []
+    for line_idx, raw_line in enumerate(text.splitlines()):
+        stripped = raw_line.strip()
+        if any(re.match(pattern, stripped, flags=re.IGNORECASE) for pattern in instruction_patterns):
+            continue
+        if prompt_fragments:
+            normalized_line = normalize_fragment(stripped)
+            if (
+                normalized_line
+                and normalized_line in prompt_fragments
+                and (line_idx < 3 or is_instruction_like(normalized_line))
+            ):
+                continue
+        filtered_lines.append(raw_line)
+    text = "\n".join(filtered_lines).strip()
+
+    # Drop any residual lead-in before the first advisory-like heading.
+    lines = text.splitlines()
+    first_heading_idx = None
+    for idx, raw_line in enumerate(lines):
+        normalized = normalize_line(raw_line)
+        if not normalized:
+            continue
+        if raw_line.strip().startswith("**") or "advisory" in normalized or "alert" in normalized:
+            first_heading_idx = idx
+            break
+    if first_heading_idx is not None and first_heading_idx > 0:
+        lines = lines[first_heading_idx:]
+        text = "\n".join(lines).strip()
+
+    # Remove repeated heading blocks when the model emits duplicated advisories.
+    lines = text.splitlines()
+    seen_headings: Dict[str, int] = {}
+    for idx, raw_line in enumerate(lines):
+        normalized = normalize_line(raw_line).rstrip(":")
+        if not normalized:
+            continue
+        is_heading_like = (
+            len(normalized) <= 120
+            and (
+                normalized.endswith(":")
+                or "advisory" in normalized
+                or "alert" in normalized
+            )
+        )
+        if not is_heading_like:
+            continue
+        if normalized in seen_headings:
+            lines = lines[:idx]
+            text = "\n".join(lines).strip()
+            break
+        seen_headings[normalized] = idx
+
+    # Remove repeated short slogan lines (e.g. "Stay safe.", "Enjoy your jog.").
+    deduped_lines: List[str] = []
+    seen_short_lines: set[str] = set()
+    for raw_line in text.splitlines():
+        normalized = normalize_line(raw_line).rstrip(".!?")
+        word_count = len([w for w in normalized.split(" ") if w])
+        is_short_slogan = bool(normalized) and word_count <= 6 and len(normalized) <= 64
+        if is_short_slogan:
+            if normalized in seen_short_lines:
+                continue
+            seen_short_lines.add(normalized)
+        deduped_lines.append(raw_line)
+
+    # When a full advisory body exists, drop standalone short slogan lines.
+    has_substantial_body = any(
+        len([w for w in normalize_line(line).split(" ") if w]) >= 12
+        for line in deduped_lines
+    )
+    if has_substantial_body:
+        pruned_lines: List[str] = []
+        for raw_line in deduped_lines:
+            normalized = normalize_line(raw_line).rstrip(".!?")
+            word_count = len([w for w in normalized.split(" ") if w])
+            is_orphan_fragment = bool(normalized) and word_count <= 1 and len(normalized) <= 2
+            is_short_slogan = (
+                bool(normalized)
+                and word_count <= 6
+                and len(normalized) <= 64
+                and "advisory" not in normalized
+                and "alert" not in normalized
+            )
+            is_boldish = raw_line.strip().startswith("**") or raw_line.strip().endswith("**")
+            if is_orphan_fragment:
+                continue
+            if is_short_slogan and is_boldish:
+                continue
+            pruned_lines.append(raw_line)
+        deduped_lines = pruned_lines
+
+    text = "\n".join(deduped_lines).strip()
+    # Normalize markdown artifacts to avoid broken trailing '**' fragments.
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = text.replace("**", "")
+    text = re.sub(r"[ \t]+\n", "\n", text).strip()
+
+    # Normalize punctuation spacing for sentence parsing.
+    text = re.sub(r"([.!?])(?=[A-Za-z])", r"\1 ", text)
+    text = re.sub(r"\.{2,}", ".", text)
+    text = re.sub(r"\b([A-Za-z]{3,})\s+\1\b", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+
+    # Sentence-level dedupe to remove generation loops.
+    sentence_parts = re.split(r"(?<=[.!?])\s+|\n+", text)
+    pruned_sentences: List[str] = []
+    seen_short_sentences: set[str] = set()
+    seen_sentences: set[str] = set()
+    for sentence_idx, sentence in enumerate(sentence_parts):
+        s = sentence.strip()
+        if not s:
+            continue
+        if prompt_fragments:
+            normalized_sentence = normalize_fragment(s)
+            if (
+                normalized_sentence
+                and normalized_sentence in prompt_fragments
+                and (sentence_idx < 3 or is_instruction_like(normalized_sentence))
+            ):
+                continue
+        normalized = re.sub(r"[^a-z0-9 ]+", "", s.lower())
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if not normalized:
+            continue
+
+        word_count = len(normalized.split(" "))
+        if word_count <= 1 and len(normalized) <= 2:
+            continue
+
+        # Drop immediate duplicate sentence loops.
+        if pruned_sentences:
+            prev_norm = re.sub(r"[^a-z0-9 ]+", "", pruned_sentences[-1].lower())
+            prev_norm = re.sub(r"\s+", " ", prev_norm).strip()
+            if normalized == prev_norm:
+                continue
+
+        # Drop repeated short slogan-like sentences across the whole advisory.
+        if word_count <= 12:
+            if normalized in seen_short_sentences:
+                continue
+            seen_short_sentences.add(normalized)
+        elif word_count >= 5:
+            # Also dedupe repeated medium/long sentences that can appear at the end.
+            if normalized in seen_sentences:
+                continue
+            seen_sentences.add(normalized)
+
+        pruned_sentences.append(s)
+
+    if pruned_sentences:
+        text = " ".join(pruned_sentences).strip()
+
+    if text and text[-1] not in ".!?":
+        last_sentence_end = max(text.rfind("."), text.rfind("!"), text.rfind("?"))
+        if last_sentence_end > 0:
+            text = text[: last_sentence_end + 1].rstrip()
+
+    return text
 
 
 def derive_severity(
@@ -1197,7 +1531,7 @@ async def interpret_weather(request: InterpretRequest):
         alert = await llm_service.generate(prompt, max_tokens=INTERPRET_MAX_TOKENS)
 
         response_obj = InterpretResponse(
-            alert=alert.strip(),
+            alert=_clean_generated_alert(alert, prompt=prompt),
             severity=severity,
             region=region,
             forecast_hour=request.forecast_hour,
